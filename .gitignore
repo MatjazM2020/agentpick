@@ -1,0 +1,5 @@
+.coding-patterns/
+.copilot-context/
+.github/
+.env
+venv
