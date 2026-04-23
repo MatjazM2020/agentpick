@@ -3,3 +3,103 @@
 .github/
 .env
 venv
+.UI/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+*.log
+
+# Virtual Environments
+env/
+ENV/
+.venv
+.env.local
+.env.*.local
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Node.js / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+package-lock.json
+dist/
+build/
+.svelte-kit/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+Thumbs.db
+.vscode-upload
+desktop.ini
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.json~
+
+# Backend specific
+backend/venv/
+UI/backend/venv/
+backend/.env.local
+UI/backend/.env.local
+backend/data/
+UI/backend/data/
+backend/logs/
+UI/backend/logs/
+
+# Docker
+docker-compose.override.yaml
+.dockerignore
+
+# Misc
+.env.*.secret
+*.pem
+*.key
+.credentials
+.aws
+.credentials.json

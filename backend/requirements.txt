@@ -1,0 +1,53 @@
+# Core Web Framework
+Flask
+Werkzeug
+
+# Environment & Configuration
+python-dotenv
+
+# Data Validation & Serialization
+pydantic
+pydantic-core
+
+# Azure Services & Authentication
+azure-identity
+azure-ai-projects
+azure-ai-inference
+azure-ai-generative
+
+# Agent Framework
+agent-framework
+openai
+
+# Vector Database
+qdrant-client
+
+# Text Processing & Embeddings
+sentence-transformers
+torch
+numpy
+scipy
+scikit-learn
+
+# Async & Concurrency
+aiohttp
+asyncio-contextmanager
+
+# Utilities
+requests
+httpx
+typing-extensions
+
+# Development & Testing
+pytest
+pytest-asyncio
+pytest-cov
+black
+flake8
+mypy
+
+# Logging & Debugging
+loguru
+
+# Optional: Documentation
+flasgger
