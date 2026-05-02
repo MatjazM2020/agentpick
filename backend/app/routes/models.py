@@ -4,8 +4,9 @@ Models endpoint (/v1/models).
 Advertises available recommendation models to Open WebUI.
 """
 
-from fastapi import APIRouter
 import time
+
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/v1", tags=["models"])
 
@@ -43,20 +44,18 @@ async def list_models():
 async def get_model(model_id: str):
     """
     Get details for a specific model.
-    
+
     Args:
         model_id: Model identifier
-        
+
     Returns:
         Model details or 404 if not found
     """
     for model in AVAILABLE_MODELS:
         if model["id"] == model_id:
             return model
-    
-    return {
-        "error": {
-            "message": f"Model '{model_id}' not found",
-            "type": "not_found_error"
-        }
-    }, 404
+
+    raise HTTPException(
+        status_code=404,
+        detail={"message": f"Model '{model_id}' not found", "type": "not_found_error"},
+    )

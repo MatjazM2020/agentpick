@@ -8,15 +8,16 @@ and returns recommendations as assistant messages.
 import logging
 import time
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from src.services.recommendation_pipeline import run_recommendation
 from app.schemas.openai_chat import ChatCompletionRequest, ChatCompletionResponse
 from app.services.recommendation_adapter import (
     extract_user_query,
+    iter_chat_completion_sse,
     state_to_openai_response,
 )
 
@@ -24,8 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["chat"])
 
 
-@router.post("/chat/completions")
-async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
+@router.post("/chat/completions", response_model=None)
+async def chat_completions(request: ChatCompletionRequest):
     """
     Create a chat completion using the recommendation engine.
     
@@ -78,15 +79,14 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
                 detail=f"Recommendation processing failed: {str(e)}"
             )
         
-        # Generate response ID and timestamp
-        response_id = str(uuid.uuid4()).replace("-", "")[:12]
         created_timestamp = int(time.time())
-        
+        completion_id = f"chatcmpl-{uuid.uuid4()}"
+
         # Convert to OpenAI format
         response_dict = state_to_openai_response(
             state=state,
             model_id=request.model,
-            request_id=response_id,
+            completion_id=completion_id,
             created_timestamp=created_timestamp,
         )
         
@@ -94,7 +94,19 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
             f"[ChatCompletions] Response: "
             f"recommendations={len(state.final_recommendations)}"
         )
-        
+
+        if request.stream:
+            assistant_text = response_dict["choices"][0]["message"]["content"]
+            return StreamingResponse(
+                iter_chat_completion_sse(
+                    assistant_text,
+                    completion_id,
+                    request.model,
+                    created_timestamp,
+                ),
+                media_type="text/event-stream",
+            )
+
         # Return as Pydantic model for validation
         return ChatCompletionResponse(**response_dict)
     

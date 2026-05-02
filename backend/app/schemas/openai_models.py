@@ -4,7 +4,7 @@ OpenAI-compatible models list schema.
 Defines the response format for /v1/models endpoint.
 """
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -15,8 +15,8 @@ class Model(BaseModel):
     created: int = Field(..., description="Unix timestamp when model was released")
     owned_by: str = Field(..., description="Organization owning this model")
     permission: List[dict] = Field(default_factory=list, description="Permission details")
-    root: str = Field(None, description="Root model if this is a fine-tune")
-    parent: str = Field(None, description="Parent model if this is a fine-tune")
+    root: Optional[str] = Field(None, description="Root model if this is a fine-tune")
+    parent: Optional[str] = Field(None, description="Parent model if this is a fine-tune")
 
 
 class ModelsListResponse(BaseModel):

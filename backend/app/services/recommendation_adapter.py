@@ -5,89 +5,66 @@ Converts between internal RecommendationState and OpenAI-compatible API formats.
 This adapter allows the recommendation engine to be used as a standard OpenAI provider.
 """
 
-import logging
-from typing import List, Dict, Any
+import json
+from typing import Any, Dict, Iterator, List
 from src.core.state import RecommendationState, ScoredModel
 
-logger = logging.getLogger(__name__)
 
-
-def format_recommendations_as_text(recommendations: List[ScoredModel]) -> str:
+def format_recommendations_as_text(
+    recommendations: List[ScoredModel],
+    explanations: Dict[str, str],
+) -> str:
     """
-    Convert recommendation objects into readable assistant output.
-    
+    Convert recommendation objects into readable assistant output (plain text).
+
     Args:
         recommendations: List of ScoredModel objects from pipeline
-        
+        explanations: model_id -> synthesizer explanation
+
     Returns:
         Formatted text response suitable for LLM chat
     """
     if not recommendations:
         return "No recommendations found for your query."
-    
-    lines = ["Recommended models:\n"]
-    
+
+    lines = ["Recommended models:", ""]
+
     for idx, rec in enumerate(recommendations, start=1):
-        # Format score as percentage
-        score_percent = rec.score * 100
-        
-        # Main recommendation line
-        lines.append(f"{idx}. **{rec.model_id}**")
-        lines.append(f"   Score: {score_percent:.1f}%")
-        
-        # Add score breakdown if available
-        if rec.score_breakdown:
-            breakdown_items = []
-            for component, value in rec.score_breakdown.items():
-                component_display = component.replace("_", " ").title()
-                breakdown_items.append(f"{component_display}: {value:.2f}")
-            
-            if breakdown_items:
-                lines.append(f"   Breakdown: {', '.join(breakdown_items)}")
-        
-        # Add metadata if available (description, parameters, etc.)
-        if rec.metadata:
-            # Try to extract useful metadata fields
-            if "description" in rec.metadata:
-                lines.append(f"   Description: {rec.metadata['description']}")
-            
-            if "parameters" in rec.metadata:
-                params = rec.metadata["parameters"]
-                if isinstance(params, dict):
-                    # Format key parameters
-                    if "size" in params:
-                        lines.append(f"   Size: {params['size']}")
-                    if "quantized" in params:
-                        lines.append(f"   Quantized: {params['quantized']}")
-        
-        lines.append("")  # Add spacing between recommendations
-    
-    return "\n".join(lines)
+        lines.append(f"{idx}. {rec.model_id}")
+        lines.append(f"   Score: {rec.score:.2f}")
+        reason = explanations.get(rec.model_id)
+        if reason:
+            lines.append(f"   Reason: {reason.strip()}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 def state_to_openai_response(
     state: RecommendationState,
     model_id: str,
-    request_id: str,
+    completion_id: str,
     created_timestamp: int,
 ) -> Dict[str, Any]:
     """
     Convert RecommendationState to OpenAI-compatible chat completion response.
-    
+
     Args:
         state: RecommendationState from recommendation pipeline
         model_id: Model identifier (e.g., "agentpick-recommender")
-        request_id: Unique request ID
+        completion_id: Full OpenAI-style id (e.g. chatcmpl-…)
         created_timestamp: Unix timestamp of request
-        
+
     Returns:
         OpenAI-compatible response dict
     """
-    # Format recommendations as assistant message
-    assistant_message = format_recommendations_as_text(state.final_recommendations)
-    
+    assistant_message = format_recommendations_as_text(
+        state.final_recommendations,
+        state.explanations,
+    )
+
     response = {
-        "id": f"chatcmpl-{request_id}",
+        "id": completion_id,
         "object": "chat.completion",
         "created": created_timestamp,
         "model": model_id,
@@ -109,6 +86,62 @@ def state_to_openai_response(
     }
     
     return response
+
+
+def iter_chat_completion_sse(
+    assistant_message: str,
+    completion_id: str,
+    model_id: str,
+    created_timestamp: int,
+) -> Iterator[bytes]:
+    """
+    Yield OpenAI-compatible chat.completion.chunk SSE frames, then [DONE].
+
+    Used when clients (e.g. Open WebUI) call /v1/chat/completions with stream=true.
+    Emits a minimal multi-chunk sequence: role, full content, finish.
+    """
+    base = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created_timestamp,
+        "model": model_id,
+    }
+
+    def _frame(obj: dict) -> bytes:
+        line = f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+        return line.encode("utf-8")
+
+    yield _frame(
+        {
+            **base,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": ""},
+                    "finish_reason": None,
+                }
+            ],
+        }
+    )
+    yield _frame(
+        {
+            **base,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": assistant_message},
+                    "finish_reason": None,
+                }
+            ],
+        }
+    )
+    yield _frame(
+        {
+            **base,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+    )
+    yield b"data: [DONE]\n\n"
 
 
 def extract_user_query(messages: List[Dict[str, Any]]) -> str:

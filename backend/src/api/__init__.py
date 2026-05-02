@@ -1,5 +1,5 @@
 """
-API package.
+HTTP API package.
 
-Contains Flask blueprints and request/response handling.
+The public HTTP surface is the FastAPI app in ``app.main`` (OpenAI-compatible).
 """

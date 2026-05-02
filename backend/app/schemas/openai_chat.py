@@ -6,12 +6,14 @@ allowing Open WebUI to use the recommendation engine as a standard LLM provider.
 """
 
 from typing import List, Optional, Any, Union
-from pydantic import BaseModel, Field
-from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
     """A single chat message."""
+
+    model_config = ConfigDict(extra="ignore")
+
     role: str = Field(..., description="Message role: 'user', 'assistant', 'system'")
     content: Union[str, Any] = Field(..., description="Message content")
     name: Optional[str] = Field(None, description="Optional name of the message sender")
@@ -19,6 +21,9 @@ class ChatMessage(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
+
+    model_config = ConfigDict(extra="ignore")
+
     model: str = Field(..., description="Model identifier")
     messages: List[ChatMessage] = Field(..., description="Conversation messages")
     temperature: Optional[float] = Field(0.7, ge=0, le=2, description="Sampling temperature")
@@ -35,7 +40,10 @@ class ChatCompletionChoice(BaseModel):
     """A single completion choice."""
     index: int = Field(..., description="Index of this choice")
     message: ChatMessage = Field(..., description="The completion message")
-    finish_reason: str = Field(..., description="Why generation stopped: 'stop', 'length', 'content_filter'")
+    finish_reason: str = Field(
+        ...,
+        description="Why generation stopped: 'stop', 'length', 'content_filter'",
+    )
 
 
 class ChatCompletionResponse(BaseModel):

@@ -6,10 +6,7 @@ pydantic
 # Environment & Configuration
 python-dotenv
 
-# Azure Services & Authentication
-azure-identity
-
-# Agent Framework & LLM
+# Agent Framework & LLM (OpenAI Chat Completions for agentic steps)
 agent-framework
 
 # Vector Database

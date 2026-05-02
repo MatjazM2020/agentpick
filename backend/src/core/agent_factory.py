@@ -6,41 +6,40 @@ Centralizes agent instantiation with consistent configuration across the system.
 
 import os
 from typing import Optional, Dict
+
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+from agent_framework.openai import OpenAIChatClient
+
+# Requirements Analyst + Synthesizer use OpenAI Chat Completions via agent-framework.
+DEFAULT_AGENT_CHAT_MODEL = "gpt-4.5-nano"
 
 
-def _get_client() -> FoundryChatClient:
+def _get_client() -> OpenAIChatClient:
     """
-    Get or create Azure OpenAI client for agents.
-    
-    Uses Azure CLI credentials for authentication.
-    Expects environment variables:
-    - AZURE_PROJECT_ENDPOINT
-    - AZURE_MODEL_NAME
-    
-    Returns:
-        FoundryChatClient configured for Azure OpenAI
+    OpenAI Chat Completions client for agent LLM calls.
+
+    Environment (agent-framework / OpenAIChatClient):
+    - OPENAI_API_KEY: required for successful API calls (unless provided elsewhere)
+    - OPENAI_CHAT_MODEL_ID: optional; defaults to gpt-4.5-nano
+    - OPENAI_BASE_URL: optional; OpenAI-compatible API base URL
     """
-    endpoint = os.getenv(
-        "AZURE_PROJECT_ENDPOINT",
-        "https://your-project.services.ai.azure.com"
-    )
-    model = os.getenv("AZURE_MODEL_NAME", "gpt-4o")
-    
+    model_id = os.getenv("OPENAI_CHAT_MODEL_ID", DEFAULT_AGENT_CHAT_MODEL)
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_BASE_URL")
+
+    kwargs: dict = {"model_id": model_id}
+    if api_key:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+
     try:
-        credential = AzureCliCredential()
-        return FoundryChatClient(
-            project_endpoint=endpoint,
-            model=model,
-            credential=credential,
-        )
+        return OpenAIChatClient(**kwargs)
     except Exception as e:
         raise RuntimeError(
-            f"Failed to initialize Azure OpenAI client: {e}. "
-            "Ensure AZURE_PROJECT_ENDPOINT and AZURE_MODEL_NAME are set."
-        )
+            f"Failed to initialize OpenAI chat client: {e}. "
+            "Set OPENAI_API_KEY and optionally OPENAI_CHAT_MODEL_ID / OPENAI_BASE_URL."
+        ) from e
 
 
 def _create_requirements_analyst_agent() -> Agent:

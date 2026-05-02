@@ -1,21 +1,27 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Entry point for running the Flask application.
-Handles Python path setup for module imports.
+Entry point for the recommendation API (FastAPI / OpenAI-compatible).
+
+Sets Python path so ``app`` and ``src`` resolve, then starts uvicorn.
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
 
-# Add project root to Python path so "src" imports work
-project_root = Path(__file__).parent
+project_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(project_root))
 
-# Now import and run the app
-from src.api.app import create_app
-
 if __name__ == "__main__":
-    app = create_app(config_name="development")
-    port = int(os.getenv("PORT", 5002))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    import uvicorn
+
+    port = int(os.getenv("PORT", 5000))
+    host = os.getenv("HOST", "0.0.0.0")
+    reload = os.getenv("ENV", "production") == "development"
+
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
