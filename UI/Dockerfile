@@ -23,25 +23,6 @@ ARG BUILD_HASH=dev-build
 ARG UID=0
 ARG GID=0
 
-######## WebUI frontend ########
-FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
-ARG BUILD_HASH
-
-# Set Node.js options (heap limit Allocation failed - JavaScript heap out of memory)
-# ENV NODE_OPTIONS="--max-old-space-size=4096"
-
-WORKDIR /app
-
-# to store git revision in build
-RUN apk add --no-cache git
-
-COPY package.json package-lock.json ./
-RUN npm ci --force
-
-COPY . .
-ENV APP_BUILD_HASH=${BUILD_HASH}
-RUN npm run build
-
 ######## WebUI backend ########
 FROM python:3.11.14-slim-bookworm AS base
 
@@ -172,14 +153,10 @@ RUN if [ "$USE_OLLAMA" = "true" ]; then \
     rm -rf /var/lib/apt/lists/*; \
     fi
 
-# copy embedding weight from build
-# RUN mkdir -p /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
-# COPY --from=build /app/onnx /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2/onnx
-
 # copy built frontend files
-COPY --chown=$UID:$GID --from=build /app/build /app/build
-COPY --chown=$UID:$GID --from=build /app/CHANGELOG.md /app/CHANGELOG.md
-COPY --chown=$UID:$GID --from=build /app/package.json /app/package.json
+COPY --chown=$UID:$GID ./build /app/build
+COPY --chown=$UID:$GID ./CHANGELOG.md /app/CHANGELOG.md
+COPY --chown=$UID:$GID ./package.json /app/package.json
 
 # copy backend files
 COPY --chown=$UID:$GID ./backend .

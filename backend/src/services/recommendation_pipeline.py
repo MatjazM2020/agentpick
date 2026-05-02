@@ -20,10 +20,10 @@ import time
 from typing import Optional
 from datetime import datetime
 
-from backend.src.core.state import RecommendationState, Message
-from backend.src.core.config import AgentConfig, ScoringConfig, RetrieverConfig
-from backend.src.core.agent_factory import create_agents
-from backend.src.agents import supervisor
+from src.core.state import RecommendationState, Message
+from src.core.config import AgentConfig, ScoringConfig, RetrieverConfig
+from src.core.agent_factory import create_agents
+from src.agents import supervisor
 
 
 logger = logging.getLogger(__name__)

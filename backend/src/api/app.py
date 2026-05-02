@@ -53,7 +53,7 @@ def create_app(config_name: str = "development") -> Flask:
     logger.info(f"Flask app initialized in {config_name} mode")
     
     # === Register Blueprints ===
-    from backend.src.api.routes import api_bp
+    from src.api.routes import api_bp
     
     app.register_blueprint(api_bp, url_prefix="/api/v1")
     logger.info("Routes registered")

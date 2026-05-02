@@ -14,8 +14,8 @@ from typing import Optional
 from flask import Blueprint, request, jsonify
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.src.services.recommendation_pipeline import run_recommendation
-from backend.src.core.state import RecommendationState
+from src.services.recommendation_pipeline import run_recommendation
+from src.core.state import RecommendationState
 
 
 logger = logging.getLogger(__name__)

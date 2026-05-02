@@ -31,10 +31,10 @@ from typing import Optional, Tuple
 
 from agent_framework import Agent
 
-from backend.src.agents import evaluator, requirements_analyst, retriever
-from backend.src.core.state import RecommendationState, Message
-from backend.src.core.config import AgentConfig, ScoringConfig, RetrieverConfig
-from backend.src.agents import synthesizer
+from src.agents import evaluator, requirements_analyst, retriever
+from src.core.state import RecommendationState, Message
+from src.core.config import AgentConfig, ScoringConfig, RetrieverConfig
+from src.agents import synthesizer
 
 
 logger = logging.getLogger(__name__)

@@ -25,9 +25,9 @@ from collections import defaultdict
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-from backend.src.core.state import RecommendationState
-from backend.src.core.config import RetrieverConfig
-from backend.src.core.llm import embed
+from src.core.state import RecommendationState
+from src.core.config import RetrieverConfig
+from src.core.llm import embed
 
 
 logger = logging.getLogger(__name__)

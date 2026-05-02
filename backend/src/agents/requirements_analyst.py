@@ -20,7 +20,7 @@ from typing import Optional
 from agent_framework import Agent
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.src.core.state import RecommendationState
+from src.core.state import RecommendationState
 
 
 logger = logging.getLogger(__name__)

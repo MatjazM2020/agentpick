@@ -21,8 +21,8 @@ Full breakdown logged and returned for explainability.
 import logging
 from datetime import datetime
 from typing import Optional
-from backend.src.core.state import RecommendationState, ScoredModel
-from backend.src.core.config import ScoringConfig
+from src.core.state import RecommendationState, ScoredModel
+from src.core.config import ScoringConfig
 
 
 logger = logging.getLogger(__name__)
