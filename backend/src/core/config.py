@@ -9,7 +9,29 @@ Defines:
 - System behavior tuning
 """
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+def _default_qdrant_url() -> str:
+    """Qdrant HTTP URL from env (Docker: qdrant:6333; local dev: localhost)."""
+    explicit = (os.getenv("QDRANT_URL") or "").strip()
+    if explicit:
+        return explicit
+    host = (os.getenv("QDRANT_HOST") or "localhost").strip() or "localhost"
+    port = (os.getenv("QDRANT_PORT") or "6333").strip() or "6333"
+    return f"http://{host}:{port}"
+
+
+def _default_qdrant_collection_name() -> str:
+    return (os.getenv("QDRANT_COLLECTION_NAME") or "hf_models").strip() or "hf_models"
+
+
+def _default_qdrant_query_using() -> Optional[str]:
+    """Named vector for ``query_points(..., using=...)``; unset uses the collection default vector."""
+    u = (os.getenv("QDRANT_QUERY_USING") or "").strip()
+    return u or None
 
 
 @dataclass
@@ -57,9 +79,10 @@ class ScoringConfig:
 class RetrieverConfig:
     """Configuration for Qdrant retrieval."""
     
-    # Qdrant connection
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_collection_name: str = "hf_models"
+    # Qdrant connection (override via QDRANT_URL or QDRANT_HOST + QDRANT_PORT)
+    qdrant_url: str = field(default_factory=_default_qdrant_url)
+    qdrant_collection_name: str = field(default_factory=_default_qdrant_collection_name)
+    qdrant_query_using: Optional[str] = field(default_factory=_default_qdrant_query_using)
     
     # Retrieval parameters
     top_k_chunks: int = 20  # Retrieve this many chunks

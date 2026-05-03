@@ -7,7 +7,7 @@ Deterministic behavior - no LLM involved.
 Responsibilities:
 - Embed the user query using SentenceTransformer
 - Build metadata filters from task_type and constraints
-- Query Qdrant "hf_models" collection with semantic search
+- Query Qdrant "hf_models" collection via ``query_points`` (vector query API)
 - Deduplicate results by model_id (averaging scores across chunks)
 - Sort by relevance score
 - Return structured candidate models with payloads
@@ -100,13 +100,17 @@ class QdrantRetriever:
         search_limit = (self.config.top_k_chunks * 2) if relax_filters else self.config.top_k_chunks
         
         try:
-            search_results: List[Any] = self.client.search(
-                collection_name=self.config.qdrant_collection_name,
-                query_vector=embedding,
-                query_filter=filter_obj,
-                limit=search_limit,
-                with_payload=True,
-            )
+            qp_kwargs: Dict[str, Any] = {
+                "collection_name": self.config.qdrant_collection_name,
+                "query": embedding,
+                "query_filter": filter_obj,
+                "limit": search_limit,
+                "with_payload": True,
+            }
+            if self.config.qdrant_query_using:
+                qp_kwargs["using"] = self.config.qdrant_query_using
+            query_response = self.client.query_points(**qp_kwargs)
+            search_results: List[Any] = list(query_response.points)
             logger.info(
                 f"[QdrantRetriever.search] Found {len(search_results)} chunks "
                 f"(limit={search_limit})"

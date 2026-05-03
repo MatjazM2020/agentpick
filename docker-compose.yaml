@@ -11,6 +11,8 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
+    networks:
+      - agentpick
 
   # AgentPick recommendation backend
   backend:
@@ -26,14 +28,18 @@ services:
       - HOST=0.0.0.0
       - LOG_LEVEL=INFO
       - ENV=production
+      # Retriever reads QDRANT_URL or QDRANT_HOST + QDRANT_PORT (not localhost inside the container)
+      - QDRANT_URL=http://qdrant:6333
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       # OpenAI (Requirements Analyst + Synthesizer via Microsoft Agent Framework)
-      - OPENAI_CHAT_MODEL_ID=${OPENAI_CHAT_MODEL_ID:-gpt-4.5-nano}
+      - OPENAI_CHAT_MODEL_ID=${OPENAI_CHAT_MODEL_ID:-gpt-5.4-nano}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - backend_data:/app/data
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
+    depends_on:
+      - qdrant
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]

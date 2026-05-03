@@ -4,6 +4,7 @@ Agent factory for creating and initializing agents.
 Centralizes agent instantiation with consistent configuration across the system.
 """
 
+import inspect
 import os
 from typing import Optional, Dict
 
@@ -11,7 +12,7 @@ from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 # Requirements Analyst + Synthesizer use OpenAI Chat Completions via agent-framework.
-DEFAULT_AGENT_CHAT_MODEL = "gpt-4.5-nano"
+DEFAULT_AGENT_CHAT_MODEL = "gpt-5.4-nano"
 
 
 def _get_client() -> OpenAIChatClient:
@@ -20,14 +21,22 @@ def _get_client() -> OpenAIChatClient:
 
     Environment (agent-framework / OpenAIChatClient):
     - OPENAI_API_KEY: required for successful API calls (unless provided elsewhere)
-    - OPENAI_CHAT_MODEL_ID: optional; defaults to gpt-4.5-nano
+    - OPENAI_CHAT_MODEL_ID: optional; defaults to DEFAULT_AGENT_CHAT_MODEL (passed as model / model_id per SDK)
     - OPENAI_BASE_URL: optional; OpenAI-compatible API base URL
     """
     model_id = os.getenv("OPENAI_CHAT_MODEL_ID", DEFAULT_AGENT_CHAT_MODEL)
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL")
 
-    kwargs: dict = {"model_id": model_id}
+    # PyPI-stable agent-framework uses ``model``; some releases/docs use ``model_id``.
+    _params = inspect.signature(OpenAIChatClient.__init__).parameters
+    kwargs: dict = {}
+    if "model" in _params:
+        kwargs["model"] = model_id
+    elif "model_id" in _params:
+        kwargs["model_id"] = model_id
+    else:
+        kwargs["model"] = model_id
     if api_key:
         kwargs["api_key"] = api_key
     if base_url:

@@ -20,6 +20,7 @@ from typing import Optional
 from agent_framework import Agent
 from pydantic import BaseModel, Field, ValidationError
 
+from src.core.agent_output import agent_run_text
 from src.core.state import RecommendationState
 
 
@@ -102,7 +103,8 @@ Rules:
             logger.info(f"[RequirementsAnalyst] Attempt {attempt}/{max_retries}")
             
             # Run agent
-            raw_output = await agent.run(prompt)
+            run_result = await agent.run(prompt)
+            raw_output = agent_run_text(run_result)
             logger.debug(f"[RequirementsAnalyst] Raw LLM output: {raw_output}")
             
             # Try to parse JSON
