@@ -38,13 +38,14 @@ def _default_qdrant_query_using() -> Optional[str]:
 class ScoringConfig:
     """Weights and parameters for the deterministic scoring function."""
     
-    # Scoring weights (must sum to 1.0)
-    w_semantic_similarity: float = 0.35
-    w_popularity: float = 0.20
-    w_recency: float = 0.15
-    w_hardware_fit: float = 0.15
-    w_license_match: float = 0.10
-    w_benchmark_score: float = 0.05
+    # Scoring weights (must sum to 1.0). Recency de-emphasized; license + CPU/inference heuristics up.
+    w_semantic_similarity: float = 0.22
+    w_popularity: float = 0.22
+    w_recency: float = 0.04
+    w_hardware_fit: float = 0.13
+    w_license_match: float = 0.18
+    w_inference_profile: float = 0.18
+    w_benchmark_score: float = 0.03
     
     # Scoring component thresholds
     min_similarity_score: float = 0.3
@@ -67,6 +68,7 @@ class ScoringConfig:
             self.w_recency +
             self.w_hardware_fit +
             self.w_license_match +
+            self.w_inference_profile +
             self.w_benchmark_score
         )
         if not 0.99 <= total <= 1.01:
@@ -87,7 +89,11 @@ class RetrieverConfig:
     # Retrieval parameters
     top_k_chunks: int = 20  # Retrieve this many chunks
     top_k_models: int = 10  # Return this many deduplicated models
-    min_similarity_threshold: float = 0.3
+    # Post-vector gate; 0 = keep all Qdrant hits and let the Python evaluator rank (recommended).
+    min_similarity_threshold: float = 0.0
+    # When False (default): do not AND-filter on pipeline_tag/license in Qdrant — LLM task_type
+    # rarely matches HF pipeline_tag 1:1 and yields zero hits. Ranking still uses constraints.
+    apply_qdrant_structured_filter: bool = False
     
     # Metadata filtering
     enabled_tags_filter: list[str] = None  # If set, only include these tags
@@ -111,8 +117,16 @@ class AgentConfig:
     require_all_constraints: bool = False  # If False, extract what's possible
     
     # Supervisor behavior
-    quality_threshold: float = 0.5  # Confidence threshold for stopping
+    quality_threshold: float = 0.5  # Top composite score below this triggers retrieval refinement
     auto_refine_on_low_confidence: bool = True
+    # How many ranked models to explain in the chat response (project: top-K explainable)
+    recommendation_top_k: int = 3
+    # Below this requirements confidence (or vague short query), ask follow-ups before retrieval
+    stop_for_query_refinement_below: float = 0.55
+    # Top-1 semantic_similarity (evaluator breakdown, 0–1) below this → extra follow-up questions
+    min_top_semantic_similarity: float = 0.22
+    # Top-1 composite score below this → flag weak match (follow-ups + optional retriever refine)
+    min_top_composite_score: float = 0.42
 
 
 @dataclass

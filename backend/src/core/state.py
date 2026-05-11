@@ -30,6 +30,14 @@ class ScoredModel(BaseModel):
         default_factory=dict,
         description="Raw model metadata from Qdrant"
     )
+    score_explanations: dict[str, str] = Field(
+        default_factory=dict,
+        description="Qualitative phrases per axis for user-facing copy (no raw weights)."
+    )
+    inference_facts: dict[str, str] = Field(
+        default_factory=dict,
+        description="Grounded planning hints: params, quant, license, runtimes, etc."
+    )
 
 
 class RecommendationState(BaseModel):
@@ -45,7 +53,11 @@ class RecommendationState(BaseModel):
     
     # Input & Conversation
     user_query: str = Field(
-        description="Original user query"
+        description="Original user query (typically latest user turn)"
+    )
+    conversation_text: str = Field(
+        default="",
+        description="All user turns joined; used for retrieval and requirements when set",
     )
     messages: list[Message] = Field(
         default_factory=list,
@@ -89,6 +101,22 @@ class RecommendationState(BaseModel):
         default_factory=list,
         description="Clarifying questions for interactive refinement"
     )
+    requirements_confidence: Optional[float] = Field(
+        default=None,
+        description="0–1 from requirements analyst; used for underspecified-query gating",
+    )
+    refinement_assistant_text: Optional[str] = Field(
+        default=None,
+        description="Full assistant message when pipeline stops for clarification (no top-3 yet)",
+    )
+    stopped_for_query_refinement: bool = Field(
+        default=False,
+        description="True when returning only clarification questions (no ranked top-3)",
+    )
+    needs_score_refinement: bool = Field(
+        default=False,
+        description="True when top match is below similarity/score thresholds; top-3 still shown",
+    )
     
     # Pipeline Tracking
     iteration: int = Field(
@@ -117,3 +145,17 @@ class RecommendationState(BaseModel):
     class Config:
         """Pydantic config."""
         arbitrary_types_allowed = True
+
+    def natural_language_context_for_requirements(self) -> str:
+        """User-side text for requirements and refinement (no assistant turns)."""
+        ct = (self.conversation_text or "").strip()
+        if ct:
+            return ct
+        parts = [m.content.strip() for m in self.messages if m.role == "user" and m.content]
+        if parts:
+            return "\n\n".join(parts)
+        return (self.user_query or "").strip()
+
+    def effective_search_query(self) -> str:
+        """Text used for embedding / Qdrant search."""
+        return (self.conversation_text or "").strip() or (self.user_query or "").strip()

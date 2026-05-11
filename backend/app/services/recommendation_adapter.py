@@ -10,34 +10,128 @@ from typing import Any, Dict, Iterator, List
 from src.core.state import RecommendationState, ScoredModel
 
 
+def _normalize_message_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        text_parts: List[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(str(item.get("text", "")))
+        return " ".join(text_parts).strip()
+    return str(content).strip() if content is not None else ""
+
+
+def extract_user_conversation_text(messages: List[Dict[str, Any]]) -> str:
+    """
+    All user turns in order, separated by blank lines — used as retrieval / requirements context.
+    """
+    parts: List[str] = []
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        t = _normalize_message_content(m.get("content"))
+        if t:
+            parts.append(t)
+    return "\n\n".join(parts).strip()
+
+
 def format_recommendations_as_text(
     recommendations: List[ScoredModel],
     explanations: Dict[str, str],
+    follow_up_questions: List[str],
+    needs_score_refinement: bool,
 ) -> str:
     """
     Convert recommendation objects into readable assistant output (plain text).
 
-    Args:
-        recommendations: List of ScoredModel objects from pipeline
-        explanations: model_id -> synthesizer explanation
-
-    Returns:
-        Formatted text response suitable for LLM chat
+    Always formats up to three ranked models. Appends clarifying follow-ups and
+    a closing question to help the user pick one of the three.
     """
     if not recommendations:
-        return "No recommendations found for your query."
+        return (
+            "No ranked models are available for this turn. "
+            "Add more detail about your task, hardware, or constraints and try again."
+        )
 
-    lines = ["Recommended models:", ""]
+    lines: List[str] = []
+    if needs_score_refinement:
+        lines.append(
+            "Note: The best catalog matches for your wording are only moderate strength. "
+            "The top three below are still the current best fits; answering the follow-up "
+            "questions will sharpen the next ranking."
+        )
+        lines.append("")
+
+    lines.append("Top 3 models:")
+    lines.append("")
 
     for idx, rec in enumerate(recommendations, start=1):
         lines.append(f"{idx}. {rec.model_id}")
-        lines.append(f"   Score: {rec.score:.2f}")
+        if rec.score >= 0.62:
+            lines.append("   Overall ranked fit: strong for your stated constraints.")
+        elif rec.score >= 0.45:
+            lines.append("   Overall ranked fit: moderate — compare deployment notes below.")
+        else:
+            lines.append("   Overall ranked fit: weaker match — treat as a candidate to validate.")
         reason = explanations.get(rec.model_id)
         if reason:
-            lines.append(f"   Reason: {reason.strip()}")
+            lines.append(f"   Summary: {reason.strip()}")
+        facts = rec.inference_facts or {}
+        if facts:
+            lines.append("   Deployment / inference notes (from catalog metadata only):")
+            for key in (
+                "parameter_count",
+                "quantized_ram",
+                "quantization",
+                "recommended_quantization",
+                "cpu_performance",
+                "runtimes",
+                "license",
+            ):
+                line = facts.get(key)
+                if line:
+                    lines.append(f"   - {line}")
         lines.append("")
 
+    if follow_up_questions:
+        lines.append("Follow-up questions (to refine your next request):")
+        for q in follow_up_questions:
+            lines.append(f"- {q.strip()}")
+        lines.append("")
+
+    ids = [r.model_id for r in recommendations]
+    if len(ids) == 3:
+        pick = (
+            f"To pick one model among these three ({ids[0]}, {ids[1]}, {ids[2]}), "
+            "what matters most for you: inference speed/latency, license/compliance, "
+            "or fitting a specific memory / hardware budget?"
+        )
+    elif len(ids) == 2:
+        pick = (
+            f"To pick one model between {ids[0]} and {ids[1]}, "
+            "which is more important: raw quality on your task type, or smallest footprint on your hardware?"
+        )
+    else:
+        pick = (
+            f"If you refine your constraints, we can suggest alternatives to {ids[0]}. "
+            "What single constraint (latency, license, or model size) is tightest for you?"
+        )
+    lines.append(pick)
+
     return "\n".join(lines).rstrip()
+
+
+def assistant_content_from_state(state: RecommendationState) -> str:
+    """OpenAI assistant `content` from pipeline state (clarification-only or top-3 path)."""
+    if state.stopped_for_query_refinement and state.refinement_assistant_text:
+        return state.refinement_assistant_text.strip()
+    return format_recommendations_as_text(
+        state.final_recommendations,
+        state.explanations,
+        state.follow_up_questions,
+        state.needs_score_refinement,
+    )
 
 
 def state_to_openai_response(
@@ -58,10 +152,7 @@ def state_to_openai_response(
     Returns:
         OpenAI-compatible response dict
     """
-    assistant_message = format_recommendations_as_text(
-        state.final_recommendations,
-        state.explanations,
-    )
+    assistant_message = assistant_content_from_state(state)
 
     response = {
         "id": completion_id,

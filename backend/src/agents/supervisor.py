@@ -29,12 +29,19 @@ Decision logging:
 import logging
 from typing import Optional, Tuple
 
-from agent_framework import Agent
+
 
 from src.agents import evaluator, requirements_analyst, retriever
-from src.core.state import RecommendationState, Message
+from src.core.state import RecommendationState
 from src.core.config import AgentConfig, ScoringConfig, RetrieverConfig
+from src.core.query_specificity import (
+    should_stop_for_query_refinement,
+    missing_requirement_slots,
+    fallback_refinement_text,
+    no_retrieval_hits_message,
+)
 from src.agents import synthesizer
+from src.agents.refinement_advisor import run as refinement_advisor_run
 
 
 logger = logging.getLogger(__name__)
@@ -221,6 +228,27 @@ async def run_pipeline(
         state.agent_logs.append(f"Supervisor: Requirements analysis failed: {e}")
         return state
     
+    # === Underspecified query: ask follow-ups before catalog search ===
+    if should_stop_for_query_refinement(state, config):
+        _log_iteration(state, "query_refinement", {"reason": "underspecified_or_low_confidence"})
+        try:
+            state = await refinement_advisor_run(
+                state,
+                agents["refinement_advisor"],
+                max_retries=config.max_synthesizer_retries,
+            )
+        except Exception as e:
+            logger.error(f"[Supervisor] Refinement advisor failed: {e}")
+            state.agent_logs.append(f"Supervisor: Refinement advisor failed: {e}")
+            slots = missing_requirement_slots(state)
+            state.refinement_assistant_text = fallback_refinement_text(slots)
+            state.stopped_for_query_refinement = True
+            state.follow_up_questions = []
+        state.final_recommendations = []
+        state.scored_models = []
+        state.retrieved_models = []
+        return state
+    
     # === PHASE 2: Initial Retrieval ===
     _log_iteration(state, "retrieval", {"phase": "starting"})
     
@@ -234,6 +262,27 @@ async def run_pipeline(
     except Exception as e:
         logger.error(f"[Supervisor] Initial retrieval failed: {e}")
         state.agent_logs.append(f"Supervisor: Initial retrieval failed: {e}")
+        return state
+    
+    if not state.retrieved_models:
+        logger.info("[Supervisor] Initial retrieval empty; retrying with relaxed filters")
+        try:
+            state = retriever.run(state, retriever_config, refine=True)
+            _log_iteration(
+                state, "retrieval_relaxed",
+                {"candidates": len(state.retrieved_models)},
+            )
+        except Exception as e:
+            logger.error(f"[Supervisor] Relaxed retrieval failed: {e}")
+            state.agent_logs.append(f"Supervisor: Relaxed retrieval failed: {e}")
+    
+    if not state.retrieved_models:
+        state.refinement_assistant_text = no_retrieval_hits_message(state, config)
+        state.stopped_for_query_refinement = True
+        state.follow_up_questions = []
+        state.final_recommendations = []
+        state.scored_models = []
+        _log_iteration(state, "retrieval", {"candidates": 0, "branch": "no_hits_refinement"})
         return state
     
     # === PHASE 3: Initial Evaluation ===
@@ -253,6 +302,18 @@ async def run_pipeline(
         logger.error(f"[Supervisor] Initial evaluation failed: {e}")
         state.agent_logs.append(f"Supervisor: Initial evaluation failed: {e}")
         return state
+    
+    if state.scored_models:
+        top = state.scored_models[0]
+        sem = float(top.score_breakdown.get("semantic_similarity", 0.0))
+        comp = float(top.score)
+        if sem < config.min_top_semantic_similarity or comp < config.min_top_composite_score:
+            state.needs_score_refinement = True
+            state.agent_logs.append(
+                f"[Supervisor] Below similarity/score thresholds: "
+                f"semantic_similarity={sem:.3f} (min {config.min_top_semantic_similarity}), "
+                f"top_composite={comp:.3f} (min {config.min_top_composite_score})"
+            )
     
     # === PHASE 4: Refinement Loop (max 2 iterations) ===
     max_refinements = 2
@@ -326,7 +387,9 @@ async def run_pipeline(
     _log_iteration(state, "synthesis", {"phase": "starting"})
     
     try:
-        state = await synthesizer.run(state, agents["synthesizer"], top_k=5)
+        state = await synthesizer.run(
+            state, agents["synthesizer"], top_k=config.recommendation_top_k
+        )
         _log_iteration(
             state, "synthesis",
             {"explanations": len(state.final_recommendations)}
@@ -335,6 +398,17 @@ async def run_pipeline(
         logger.error(f"[Supervisor] Synthesis failed: {e}")
         state.agent_logs.append(f"Supervisor: Synthesis failed: {e}")
         # Don't return yet - we have scored models even without explanations
+    
+    if state.needs_score_refinement and state.final_recommendations:
+        extras = [
+            "In one sentence, what does a correct model output look like for your use case?",
+            "Any hard limits on latency, VRAM/RAM, or license (e.g. Apache-2.0 only)?",
+        ]
+        merged = list(state.follow_up_questions or [])
+        for q in extras:
+            if q not in merged:
+                merged.append(q)
+        state.follow_up_questions = merged[:6]
     
     # === Pipeline Complete ===
     final_iteration = state.iteration

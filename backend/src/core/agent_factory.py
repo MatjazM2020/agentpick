@@ -134,6 +134,21 @@ Grounded explanation structure:
     return agent
 
 
+def _create_refinement_advisor_agent() -> Agent:
+    """Interactive clarification when the query is too broad or retrieval is weak."""
+    client = _get_client()
+    instructions = """You are a Refinement Advisor for an ML model recommendation chat.
+
+You only produce JSON. You never name specific models from Hugging Face or the web.
+You ask concise questions so the user can add task, hardware, latency, memory, license, or preference details.
+"""
+    return Agent(
+        client=client,
+        name="RefinementAdvisor",
+        instructions=instructions,
+    )
+
+
 class AgentFactory:
     """Factory for creating and managing agents."""
     
@@ -157,6 +172,7 @@ class AgentFactory:
             cls._agents = {
                 "requirements_analyst": _create_requirements_analyst_agent(),
                 "synthesizer": _create_synthesizer_agent(),
+                "refinement_advisor": _create_refinement_advisor_agent(),
             }
         return cls._agents
     

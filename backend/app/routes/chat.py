@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from src.services.recommendation_pipeline import run_recommendation
 from app.schemas.openai_chat import ChatCompletionRequest, ChatCompletionResponse
 from app.services.recommendation_adapter import (
+    extract_user_conversation_text,
     extract_user_query,
     iter_chat_completion_sse,
     state_to_openai_response,
@@ -49,10 +50,9 @@ async def chat_completions(request: ChatCompletionRequest):
             raise ValueError("No messages provided")
         
         # Extract user query from OpenAI message format
+        openai_messages = [{"role": m.role, "content": m.content} for m in request.messages]
         try:
-            user_query = extract_user_query(
-                [{"role": m.role, "content": m.content} for m in request.messages]
-            )
+            user_query = extract_user_query(openai_messages)
         except ValueError as e:
             logger.warning(f"Query extraction failed: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid message format: {str(e)}")
@@ -70,8 +70,12 @@ async def chat_completions(request: ChatCompletionRequest):
         
         # Run recommendation pipeline
         # The pipeline is async and handles event loop properly
+        conversation_text = extract_user_conversation_text(openai_messages)
         try:
-            state = await run_recommendation(user_query)
+            state = await run_recommendation(
+                user_query,
+                conversation_text=conversation_text or None,
+            )
         except Exception as e:
             logger.error(f"Recommendation pipeline failed: {e}", exc_info=True)
             raise HTTPException(

@@ -11,7 +11,8 @@ Scoring function:
         w3 * recency +
         w4 * hardware_fit +
         w5 * license_match +
-        w6 * benchmark_score
+        w6 * inference_profile +
+        w7 * benchmark_score
     )
 
 All features normalized to [0, 1].
@@ -23,6 +24,13 @@ from datetime import datetime
 from typing import Optional
 from src.core.state import RecommendationState, ScoredModel
 from src.core.config import ScoringConfig
+from src.agents.evaluator_scoring import (
+    build_inference_facts,
+    compute_inference_profile,
+    license_match_and_compliance,
+    qualitative_score_phrases,
+    should_apply_permissive_license_filter,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -210,46 +218,6 @@ def _compute_hardware_fit(
     return min(1.0, max(0.0, hardware_penalty))
 
 
-def _compute_license_match(
-    metadata: dict,
-    constraints: dict
-) -> float:
-    """
-    Compute license match feature [0, 1].
-    
-    Binary or scaled match with user license constraints.
-    
-    Args:
-        metadata: Model metadata from Qdrant
-        constraints: User constraints (license preference)
-        
-    Returns:
-        Binary or scaled license match
-    """
-    model_license = metadata.get("license", "unknown")
-    user_licenses = constraints.get("license")  # Can be None, str, or list
-    
-    # If no license constraint specified, no match requirement (full score)
-    if not user_licenses:
-        return 1.0
-    
-    # Convert to list if string
-    if isinstance(user_licenses, str):
-        user_licenses = [user_licenses]
-    
-    # Direct match
-    if model_license.lower() in [lic.lower() for lic in user_licenses]:
-        return 1.0
-    
-    # Permissive license match
-    permissive_licenses = {"apache-2", "apache", "mit", "bsd", "cc0"}
-    if model_license.lower() in permissive_licenses:
-        return 0.8  # Good but not exact match
-    
-    # No match
-    return 0.0
-
-
 def _compute_benchmark_score(
     metadata: dict
 ) -> float:
@@ -311,10 +279,11 @@ def run(
     )
     
     scored = []
+    nl_ctx = state.natural_language_context_for_requirements()
     
     for i, model in enumerate(state.retrieved_models):
         model_id = model.get("id")
-        metadata = model.get("metadata", {})
+        metadata = dict(model.get("metadata", {}))
         retrieval_score = model.get("score", 0.0)
         
         logger.info(f"[Evaluator] Processing {i+1}/{len(state.retrieved_models)}: {model_id}")
@@ -324,7 +293,18 @@ def run(
         popularity = _compute_popularity(metadata, config)
         recency = _compute_recency(metadata, config)
         hardware_fit = _compute_hardware_fit(metadata, state.constraints, config)
-        license_match = _compute_license_match(metadata, state.constraints)
+        license_match, license_ok = license_match_and_compliance(
+            metadata, state.constraints, state.preferences
+        )
+        metadata["_license_compliant"] = license_ok
+        inference_profile = compute_inference_profile(
+            model_id,
+            metadata,
+            state.constraints,
+            state.preferences,
+            state.task_type,
+            nl_ctx,
+        )
         benchmark = _compute_benchmark_score(metadata)
         
         # Compute weighted final score
@@ -334,16 +314,18 @@ def run(
             config.w_recency * recency +
             config.w_hardware_fit * hardware_fit +
             config.w_license_match * license_match +
+            config.w_inference_profile * inference_profile +
             config.w_benchmark_score * benchmark
         )
         
-        # Store breakdown
+        # Store breakdown (numeric — for logs / diagnostics)
         score_breakdown = {
             "semantic_similarity": round(similarity, 4),
             "popularity": round(popularity, 4),
             "recency": round(recency, 4),
             "hardware_fit": round(hardware_fit, 4),
             "license_match": round(license_match, 4),
+            "inference_profile": round(inference_profile, 4),
             "benchmark_score": round(benchmark, 4),
         }
         
@@ -354,17 +336,52 @@ def run(
             f"recency={recency:.4f}, "
             f"hardware_fit={hardware_fit:.4f}, "
             f"license_match={license_match:.4f}, "
+            f"inference={inference_profile:.4f}, "
             f"benchmark={benchmark:.4f} "
             f"-> final={final_score:.4f}"
+        )
+
+        score_explanations = qualitative_score_phrases(
+            score_breakdown, state.constraints, license_ok
+        )
+        inference_facts = build_inference_facts(
+            model_id,
+            metadata,
+            state.constraints,
+            state.preferences,
+            state.task_type,
+            nl_ctx,
         )
         
         scored_model = ScoredModel(
             model_id=model_id,
             score=round(final_score, 4),
             score_breakdown=score_breakdown,
-            metadata=metadata
+            metadata=metadata,
+            score_explanations=score_explanations,
+            inference_facts=inference_facts,
         )
         scored.append(scored_model)
+    
+    if should_apply_permissive_license_filter(state.constraints, state.preferences):
+        compliant_only = [m for m in scored if m.metadata.get("_license_compliant")]
+        if compliant_only:
+            dropped = len(scored) - len(compliant_only)
+            if dropped:
+                logger.info(
+                    f"[Evaluator] Permissive license gate: dropped {dropped} non-compliant models"
+                )
+                state.agent_logs.append(
+                    f"Evaluator: permissive license filter removed {dropped} candidates"
+                )
+            scored = compliant_only
+        else:
+            logger.warning(
+                "[Evaluator] No license-compliant candidates; keeping full ranked list"
+            )
+            state.agent_logs.append(
+                "Evaluator: no license-compliant candidates — ranking without license filter"
+            )
     
     # Sort by final score descending
     scored.sort(key=lambda x: x.score, reverse=True)

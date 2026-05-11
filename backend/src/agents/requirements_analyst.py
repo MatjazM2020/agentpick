@@ -63,12 +63,13 @@ async def run(
         Updated state with task_type, constraints, preferences populated
     """
     
-    query = state.user_query
-    logger.info(f"[RequirementsAnalyst] Processing query: {query}")
+    query = state.natural_language_context_for_requirements() or state.user_query
+    logger.info(f"[RequirementsAnalyst] Processing context ({len(query)} chars)")
     
     prompt = f"""Analyze this user query and extract structured requirements.
 
-Query: "{query}"
+User messages / conversation (oldest first, use all turns):
+\"\"\"{query}\"\"\"
 
 Return ONLY a valid JSON object (no markdown, no explanations) with this structure:
 {{
@@ -117,6 +118,7 @@ Rules:
             state.task_type = validated.task_type
             state.constraints = validated.constraints
             state.preferences = validated.preferences
+            state.requirements_confidence = validated.confidence
             state.requirements_extracted = True
             
             logger.info(
@@ -154,6 +156,7 @@ Rules:
     state.task_type = _SAFE_DEFAULTS["task_type"]
     state.constraints = _SAFE_DEFAULTS["constraints"]
     state.preferences = _SAFE_DEFAULTS["preferences"]
+    state.requirements_confidence = 0.25
     state.requirements_extracted = False  # Mark as unsuccessful extraction
     
     logger.warning(
