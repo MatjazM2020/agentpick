@@ -1,0 +1,76 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu
+#SBATCH --job-name=vectorize_only
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --gpus=1
+#SBATCH --nodes=1
+#SBATCH --output=/d/hpc/home/mm11484/agentpick_data/vectorize_only.log
+#SBATCH --time=20:00:00
+
+# Vectorize Hugging Face models (embed already-downloaded models)
+#
+# This script generates embeddings from already-downloaded model READMEs
+# and stores them in Parquet format. It automatically resumes from where 
+# it left off if interrupted, using processed_models.txt for tracking.
+
+set -e
+
+# Set working directory
+cd $SLURM_SUBMIT_DIR
+
+# Create output directories
+mkdir -p logs data
+
+# Set up environment
+export OMP_NUM_THREADS=1
+export PYTHONUNBUFFERED=1
+export PYTHONPATH=/d/hpc/home/mm11484/agentpick_data/src:$PYTHONPATH
+
+# CUDA safety environment variables for robust GPU memory handling
+export CUDA_LAUNCH_BLOCKING=1
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
+# Install dependencies
+pip install -q -r requirements.txt
+
+echo "======================================"
+echo "SLURM Job Information"
+echo "======================================"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Job Name: $SLURM_JOB_NAME"
+echo "Partition: $SLURM_JOB_PARTITION"
+echo "CPUs: $SLURM_CPUS_PER_TASK"
+echo "Memory: $SLURM_MEM_PER_NODE"
+echo "Time Limit: $SLURM_TIME_LIMIT"
+echo "Working Directory: $PWD"
+echo "Node: $(hostname)"
+echo "======================================"
+echo ""
+
+echo "======================================"
+echo "Vectorization Configuration"
+echo "======================================"
+echo "Working Directory: $PWD"
+echo "Data Directory: ./data"
+echo "Embeddings File: ./data/embeddings.parquet"
+echo "Logs Directory: ./logs"
+
+# Get current processed count
+PROCESSED=0
+if [ -f "data/processed_models.txt" ]; then
+    PROCESSED=$(wc -l < "data/processed_models.txt")
+fi
+echo "Models Already Processed: $PROCESSED"
+echo "======================================"
+echo ""
+
+# Run vectorization
+python -m hf_vectorizer.vectorizer \
+    --data-dir ./data \
+    --embedding-model "BAAI/bge-large-en-v1.5" \
+    --batch-size 8
+
+echo ""
+echo "Job completed!"

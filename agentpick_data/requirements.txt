@@ -1,0 +1,11 @@
+huggingface-hub
+sentence-transformers
+transformers
+torch
+torchvision
+numpy
+pandas
+pyarrow
+tqdm
+python-dotenv
+qdrant-client
