@@ -7,7 +7,7 @@ Deterministic behavior - no LLM involved.
 Responsibilities:
 - Embed the user query using SentenceTransformer
 - Build metadata filters from task_type and constraints
-- Query Qdrant "hf_models" collection with semantic search
+- Query Qdrant "hf_models" collection via ``query_points`` (vector query API)
 - Deduplicate results by model_id (averaging scores across chunks)
 - Sort by relevance score
 - Return structured candidate models with payloads
@@ -25,9 +25,9 @@ from collections import defaultdict
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-from backend.src.core.state import RecommendationState
-from backend.src.core.config import RetrieverConfig
-from backend.src.core.llm import embed
+from src.core.state import RecommendationState
+from src.core.config import RetrieverConfig
+from src.core.llm import embed
 
 
 logger = logging.getLogger(__name__)
@@ -100,13 +100,17 @@ class QdrantRetriever:
         search_limit = (self.config.top_k_chunks * 2) if relax_filters else self.config.top_k_chunks
         
         try:
-            search_results: List[Any] = self.client.search(
-                collection_name=self.config.qdrant_collection_name,
-                query_vector=embedding,
-                query_filter=filter_obj,
-                limit=search_limit,
-                with_payload=True,
-            )
+            qp_kwargs: Dict[str, Any] = {
+                "collection_name": self.config.qdrant_collection_name,
+                "query": embedding,
+                "query_filter": filter_obj,
+                "limit": search_limit,
+                "with_payload": True,
+            }
+            if self.config.qdrant_query_using:
+                qp_kwargs["using"] = self.config.qdrant_query_using
+            query_response = self.client.query_points(**qp_kwargs)
+            search_results: List[Any] = list(query_response.points)
             logger.info(
                 f"[QdrantRetriever.search] Found {len(search_results)} chunks "
                 f"(limit={search_limit})"
@@ -145,15 +149,19 @@ class QdrantRetriever:
         logger.info(f"[QdrantRetriever.search] Deduplicated to {len(model_aggregates)} unique models")
         
         # Step 5: Build output candidates with averaged scores
+        min_sim = self.config.min_similarity_threshold
+        if relax_filters:
+            # Relaxed catalog pass: keep weak vector hits so Python scoring can still rank top-3.
+            min_sim = 0.0
         candidates: List[Dict[str, Any]] = []
         for model_id, agg in model_aggregates.items():
             avg_score = agg["score_sum"] / agg["count"] if agg["count"] > 0 else 0.0
             
             # Filter by similarity threshold
-            if avg_score < self.config.min_similarity_threshold:
+            if avg_score < min_sim:
                 logger.debug(
                     f"[QdrantRetriever.search] Skipping {model_id}: "
-                    f"score {avg_score:.4f} < threshold {self.config.min_similarity_threshold}"
+                    f"score {avg_score:.4f} < threshold {min_sim}"
                 )
                 continue
             
@@ -285,19 +293,21 @@ def run(
     
     retriever = QdrantRetriever(config)
     
-    # Build metadata filter from state constraints
-    metadata_filter = {}
-    if state.task_type:
-        metadata_filter["task_type"] = state.task_type
-    if "license" in state.constraints:
-        metadata_filter["license"] = state.constraints["license"]
-    if "tags" in state.constraints:
-        metadata_filter["tags"] = state.constraints["tags"]
+    metadata_filter: Optional[Dict[str, Any]] = None
+    if config.apply_qdrant_structured_filter:
+        mf: Dict[str, Any] = {}
+        if state.task_type:
+            mf["task_type"] = state.task_type
+        if "license" in state.constraints:
+            mf["license"] = state.constraints["license"]
+        if "tags" in state.constraints:
+            mf["tags"] = state.constraints["tags"]
+        metadata_filter = mf if mf else None
     
     try:
         retrieved_models = retriever.search(
-            query=state.user_query,
-            metadata_filter=metadata_filter if metadata_filter else None,
+            query=state.effective_search_query(),
+            metadata_filter=metadata_filter,
             relax_filters=refine
         )
     except Exception as e:

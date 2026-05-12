@@ -4,43 +4,51 @@ Agent factory for creating and initializing agents.
 Centralizes agent instantiation with consistent configuration across the system.
 """
 
+import inspect
 import os
 from typing import Optional, Dict
+
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+from agent_framework.openai import OpenAIChatClient
+
+# Requirements Analyst + Synthesizer use OpenAI Chat Completions via agent-framework.
+DEFAULT_AGENT_CHAT_MODEL = "gpt-5.4-nano"
 
 
-def _get_client() -> FoundryChatClient:
+def _get_client() -> OpenAIChatClient:
     """
-    Get or create Azure OpenAI client for agents.
-    
-    Uses Azure CLI credentials for authentication.
-    Expects environment variables:
-    - AZURE_PROJECT_ENDPOINT
-    - AZURE_MODEL_NAME
-    
-    Returns:
-        FoundryChatClient configured for Azure OpenAI
+    OpenAI Chat Completions client for agent LLM calls.
+
+    Environment (agent-framework / OpenAIChatClient):
+    - OPENAI_API_KEY: required for successful API calls (unless provided elsewhere)
+    - OPENAI_CHAT_MODEL_ID: optional; defaults to DEFAULT_AGENT_CHAT_MODEL (passed as model / model_id per SDK)
+    - OPENAI_BASE_URL: optional; OpenAI-compatible API base URL
     """
-    endpoint = os.getenv(
-        "AZURE_PROJECT_ENDPOINT",
-        "https://your-project.services.ai.azure.com"
-    )
-    model = os.getenv("AZURE_MODEL_NAME", "gpt-4o")
-    
+    model_id = os.getenv("OPENAI_CHAT_MODEL_ID", DEFAULT_AGENT_CHAT_MODEL)
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_BASE_URL")
+
+    # PyPI-stable agent-framework uses ``model``; some releases/docs use ``model_id``.
+    _params = inspect.signature(OpenAIChatClient.__init__).parameters
+    kwargs: dict = {}
+    if "model" in _params:
+        kwargs["model"] = model_id
+    elif "model_id" in _params:
+        kwargs["model_id"] = model_id
+    else:
+        kwargs["model"] = model_id
+    if api_key:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+
     try:
-        credential = AzureCliCredential()
-        return FoundryChatClient(
-            project_endpoint=endpoint,
-            model=model,
-            credential=credential,
-        )
+        return OpenAIChatClient(**kwargs)
     except Exception as e:
         raise RuntimeError(
-            f"Failed to initialize Azure OpenAI client: {e}. "
-            "Ensure AZURE_PROJECT_ENDPOINT and AZURE_MODEL_NAME are set."
-        )
+            f"Failed to initialize OpenAI chat client: {e}. "
+            "Set OPENAI_API_KEY and optionally OPENAI_CHAT_MODEL_ID / OPENAI_BASE_URL."
+        ) from e
 
 
 def _create_requirements_analyst_agent() -> Agent:
@@ -126,6 +134,21 @@ Grounded explanation structure:
     return agent
 
 
+def _create_refinement_advisor_agent() -> Agent:
+    """Interactive clarification when the query is too broad or retrieval is weak."""
+    client = _get_client()
+    instructions = """You are a Refinement Advisor for an ML model recommendation chat.
+
+You only produce JSON. You never name specific models from Hugging Face or the web.
+You ask concise questions so the user can add task, hardware, latency, memory, license, or preference details.
+"""
+    return Agent(
+        client=client,
+        name="RefinementAdvisor",
+        instructions=instructions,
+    )
+
+
 class AgentFactory:
     """Factory for creating and managing agents."""
     
@@ -149,6 +172,7 @@ class AgentFactory:
             cls._agents = {
                 "requirements_analyst": _create_requirements_analyst_agent(),
                 "synthesizer": _create_synthesizer_agent(),
+                "refinement_advisor": _create_refinement_advisor_agent(),
             }
         return cls._agents
     

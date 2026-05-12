@@ -9,20 +9,43 @@ Defines:
 - System behavior tuning
 """
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+def _default_qdrant_url() -> str:
+    """Qdrant HTTP URL from env (Docker: qdrant:6333; local dev: localhost)."""
+    explicit = (os.getenv("QDRANT_URL") or "").strip()
+    if explicit:
+        return explicit
+    host = (os.getenv("QDRANT_HOST") or "localhost").strip() or "localhost"
+    port = (os.getenv("QDRANT_PORT") or "6333").strip() or "6333"
+    return f"http://{host}:{port}"
+
+
+def _default_qdrant_collection_name() -> str:
+    return (os.getenv("QDRANT_COLLECTION_NAME") or "hf_models").strip() or "hf_models"
+
+
+def _default_qdrant_query_using() -> Optional[str]:
+    """Named vector for ``query_points(..., using=...)``; unset uses the collection default vector."""
+    u = (os.getenv("QDRANT_QUERY_USING") or "").strip()
+    return u or None
 
 
 @dataclass
 class ScoringConfig:
     """Weights and parameters for the deterministic scoring function."""
     
-    # Scoring weights (must sum to 1.0)
-    w_semantic_similarity: float = 0.35
-    w_popularity: float = 0.20
-    w_recency: float = 0.15
-    w_hardware_fit: float = 0.15
-    w_license_match: float = 0.10
-    w_benchmark_score: float = 0.05
+    # Scoring weights (must sum to 1.0). Recency de-emphasized; license + CPU/inference heuristics up.
+    w_semantic_similarity: float = 0.22
+    w_popularity: float = 0.22
+    w_recency: float = 0.04
+    w_hardware_fit: float = 0.13
+    w_license_match: float = 0.18
+    w_inference_profile: float = 0.18
+    w_benchmark_score: float = 0.03
     
     # Scoring component thresholds
     min_similarity_score: float = 0.3
@@ -45,6 +68,7 @@ class ScoringConfig:
             self.w_recency +
             self.w_hardware_fit +
             self.w_license_match +
+            self.w_inference_profile +
             self.w_benchmark_score
         )
         if not 0.99 <= total <= 1.01:
@@ -57,14 +81,19 @@ class ScoringConfig:
 class RetrieverConfig:
     """Configuration for Qdrant retrieval."""
     
-    # Qdrant connection
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_collection_name: str = "hf_models"
+    # Qdrant connection (override via QDRANT_URL or QDRANT_HOST + QDRANT_PORT)
+    qdrant_url: str = field(default_factory=_default_qdrant_url)
+    qdrant_collection_name: str = field(default_factory=_default_qdrant_collection_name)
+    qdrant_query_using: Optional[str] = field(default_factory=_default_qdrant_query_using)
     
     # Retrieval parameters
     top_k_chunks: int = 20  # Retrieve this many chunks
     top_k_models: int = 10  # Return this many deduplicated models
-    min_similarity_threshold: float = 0.3
+    # Post-vector gate; 0 = keep all Qdrant hits and let the Python evaluator rank (recommended).
+    min_similarity_threshold: float = 0.0
+    # When False (default): do not AND-filter on pipeline_tag/license in Qdrant — LLM task_type
+    # rarely matches HF pipeline_tag 1:1 and yields zero hits. Ranking still uses constraints.
+    apply_qdrant_structured_filter: bool = False
     
     # Metadata filtering
     enabled_tags_filter: list[str] = None  # If set, only include these tags
@@ -88,8 +117,16 @@ class AgentConfig:
     require_all_constraints: bool = False  # If False, extract what's possible
     
     # Supervisor behavior
-    quality_threshold: float = 0.5  # Confidence threshold for stopping
+    quality_threshold: float = 0.5  # Top composite score below this triggers retrieval refinement
     auto_refine_on_low_confidence: bool = True
+    # How many ranked models to explain in the chat response (project: top-K explainable)
+    recommendation_top_k: int = 3
+    # Below this requirements confidence (or vague short query), ask follow-ups before retrieval
+    stop_for_query_refinement_below: float = 0.55
+    # Top-1 semantic_similarity (evaluator breakdown, 0–1) below this → extra follow-up questions
+    min_top_semantic_similarity: float = 0.22
+    # Top-1 composite score below this → flag weak match (follow-ups + optional retriever refine)
+    min_top_composite_score: float = 0.42
 
 
 @dataclass

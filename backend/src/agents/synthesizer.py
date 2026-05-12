@@ -23,7 +23,8 @@ from typing import Optional
 from agent_framework import Agent
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.src.core.state import RecommendationState, ScoredModel
+from src.core.agent_output import agent_run_text
+from src.core.state import RecommendationState, ScoredModel
 
 
 logger = logging.getLogger(__name__)
@@ -57,25 +58,29 @@ def _format_model_context(scored_model: ScoredModel, user_constraints: dict) -> 
         Formatted string with model facts
     """
     metadata = scored_model.metadata
-    breakdown = scored_model.score_breakdown
+    se = scored_model.score_explanations or {}
+    facts = scored_model.inference_facts or {}
+    tags = metadata.get("tags", [])
+    tag_s = ", ".join(str(t) for t in (tags if isinstance(tags, list) else [tags]))
     
+    se_lines = "\n".join(f"- {k}: {v}" for k, v in se.items()) if se else "(not available)"
+    fact_lines = "\n".join(f"- {k}: {v}" for k, v in facts.items()) if facts else "(not available)"
+
     context = f"""
 Model: {scored_model.model_id}
-Overall Score: {scored_model.score:.3f}
+Ranked composite score (internal only; do NOT quote decimals to the user): {scored_model.score:.3f}
 
-Score Breakdown:
-- Semantic Similarity: {breakdown.get('semantic_similarity', 0):.3f}
-- Popularity: {breakdown.get('popularity', 0):.3f}
-- Recency: {breakdown.get('recency', 0):.3f}
-- Hardware Fit: {breakdown.get('hardware_fit', 0):.3f}
-- License Match: {breakdown.get('license_match', 0):.3f}
-- Benchmark: {breakdown.get('benchmark_score', 0):.3f}
+Qualitative ranking signals (use these phrases; do not invent new numeric scores):
+{se_lines}
 
-Metadata:
+Catalog-backed planning hints (only paraphrase; do not add specs absent here):
+{fact_lines}
+
+Raw hub metadata (for grounding only):
 - Downloads: {metadata.get('downloads', 'N/A')}
 - Likes: {metadata.get('likes', 'N/A')}
 - License: {metadata.get('license', 'N/A')}
-- Tags: {', '.join(metadata.get('tags', []))}
+- Tags: {tag_s or 'N/A'}
 - Pipeline Task: {metadata.get('pipeline_tag', 'N/A')}
 - Last Modified: {metadata.get('last_modified', 'N/A')}
 - Library: {metadata.get('library_name', 'N/A')}
@@ -182,12 +187,12 @@ Preferences:
 {preferences_str}
 
 INSTRUCTIONS:
-1. Generate a brief explanation for each model explaining WHY it fits the user's needs.
-2. List 2-3 PROS: specific strengths from the metadata and scores.
-3. List 2-3 CONS: trade-offs or limitations based on scores/metadata.
-4. CRITICAL: Do NOT invent features, capabilities, or metrics that are not in the metadata.
-5. Base your reasoning ONLY on: downloads, likes, recency, tags, license, and score components.
-6. Be factual and concise. No hallucination.
+1. For each model, write WHY it fits using ONLY the qualitative ranking signals and planning hints — natural language, no decimal scores, no "hardware fit 0.xxx" style wording.
+2. PROS: 2-3 bullets tied to the user's constraints (CPU, latency, license, size) and grounded in tags/downloads/license when relevant.
+3. CONS: 2-3 honest trade-offs grounded in the hints or metadata gaps (e.g. unclear quantization).
+4. CRITICAL: Do NOT invent parameter counts, RAM numbers, tokens/sec, or runtimes not implied by the hints/metadata.
+5. Do NOT restate internal component scores numerically; paraphrase strength as weak/moderate/strong only.
+6. Be factual and concise.
 
 Return ONLY valid JSON (no markdown, no text outside JSON) with this structure:
 {{
@@ -204,6 +209,7 @@ Return ONLY valid JSON (no markdown, no text outside JSON) with this structure:
         "recency": float,
         "hardware_fit": float,
         "license_match": float,
+        "inference_profile": float,
         "benchmark_score": float
       }}
     }}
@@ -211,7 +217,7 @@ Return ONLY valid JSON (no markdown, no text outside JSON) with this structure:
   "follow_up_questions": [
     "Clarifying question 1 based on user constraints?",
     "Clarifying question 2 for refinement?",
-    "Clarifying question 3 to enable next iteration?"
+    "One question that helps the user choose exactly ONE of the listed models (e.g. trade-off or deployment constraint)?"
   ]
 }}
 
@@ -220,8 +226,10 @@ CRITICAL RULES:
 - Do NOT mention capabilities not listed in tags/metadata.
 - Do NOT invent benchmark scores or metrics.
 - Do NOT hallucinate download counts or performance claims.
+- Copy score_breakdown floats EXACTLY from the candidate context (for machine validation); never put those decimals in why/pros/cons text.
 - If uncertain, say "no specific information available" rather than guessing.
 - Generate 2-3 follow_up_questions that reference user's constraints/preferences.
+- Include at least one question that helps the user pick a single winner among the listed models.
 - Questions should ask for clarification to enable refinement (e.g., "You mentioned CPU-only. Do you need real-time latency or batch processing?")
 """
     
@@ -229,7 +237,8 @@ CRITICAL RULES:
     
     for attempt in range(1, max_retries + 1):
         try:
-            raw_output = await agent.run(prompt)
+            run_result = await agent.run(prompt)
+            raw_output = agent_run_text(run_result)
             logger.debug(f"[Synthesizer] Attempt {attempt}: Raw output length={len(raw_output)}")
             
             # Parse JSON
@@ -285,17 +294,20 @@ def _build_fallback_recommendations(
     recommendations = []
     for model in scored_models:
         breakdown = model.score_breakdown
-        
-        # Extract top scoring component
-        top_component = max(breakdown.items(), key=lambda x: x[1])
-        
-        why = f"Strong {top_component[0].replace('_', ' ')}: {top_component[1]:.2f}. Score: {model.score:.3f}."
+        se = model.score_explanations or {}
+        why = (
+            f"{se.get('match_to_request', 'Ranked for your query')} "
+            f"{se.get('inference_fit', '')}".strip()
+        )
         pros = [
-            f"Semantic similarity: {breakdown.get('semantic_similarity', 0):.2f}",
-            f"Popularity score: {breakdown.get('popularity', 0):.2f}",
+            se.get("community_usage", "Hub traction is described qualitatively in the ranking signals."),
+            se.get("license", "Check the hub license field before production use."),
         ]
+        if se.get("hardware_fit"):
+            pros.append(se["hardware_fit"])
         cons = [
-            "Limited recency" if breakdown.get('recency', 0) < 0.5 else "Recently updated",
+            se.get("freshness", "Recency versus the rest of the shortlist is noted in ranking signals."),
+            "Verify quantization artifacts and CPU benchmarks on your own hardware before locking in.",
         ]
         
         rec = RecommendationExplanation(
@@ -314,7 +326,7 @@ def _build_fallback_recommendations(
 async def run(
     state: RecommendationState,
     agent: Agent,
-    top_k: int = 5
+    top_k: int = 3
 ) -> RecommendationState:
     """
     Generate human-readable explanations for top-K scored models.
@@ -362,6 +374,16 @@ async def run(
             if not original:
                 logger.warning(f"[Synthesizer] Model {exp.model_id} not in input set, skipping")
                 continue
+            merged_bd = dict(original.score_breakdown)
+            merged_bd.update(exp.score_breakdown or {})
+            exp = RecommendationExplanation(
+                model_id=exp.model_id,
+                score=exp.score,
+                why=exp.why,
+                pros=exp.pros,
+                cons=exp.cons,
+                score_breakdown=merged_bd,
+            )
             
             # Validate against hallucination
             if not _validate_no_hallucination(exp, original):
@@ -371,17 +393,32 @@ async def run(
                 explanations_list.append(fallback)
             else:
                 explanations_list.append(exp)
+
+    # LLM may omit or reorder models; align to ranked top_models (up to top_k)
+    by_id = {e.model_id: e for e in explanations_list}
+    explanations_ordered: list[RecommendationExplanation] = []
+    for m in top_models:
+        if m.model_id in by_id:
+            explanations_ordered.append(by_id[m.model_id])
+        else:
+            explanations_ordered.append(_build_fallback_recommendations([m])[0])
+    explanations_list = explanations_ordered
     
-    # Store in state
-    state.final_recommendations = [
-        ScoredModel(
-            model_id=exp.model_id,
-            score=exp.score,
-            score_breakdown=exp.score_breakdown,
-            metadata={}  # We don't need to duplicate metadata here
+    # Store in state (preserve evaluator metadata + hints for the API adapter)
+    by_orig = {m.model_id: m for m in top_models}
+    state.final_recommendations = []
+    for exp in explanations_list:
+        orig = by_orig.get(exp.model_id)
+        state.final_recommendations.append(
+            ScoredModel(
+                model_id=exp.model_id,
+                score=exp.score,
+                score_breakdown=exp.score_breakdown,
+                metadata=dict(orig.metadata) if orig else {},
+                score_explanations=dict(orig.score_explanations) if orig else {},
+                inference_facts=dict(orig.inference_facts) if orig else {},
+            )
         )
-        for exp in explanations_list
-    ]
     
     state.explanations = {
         exp.model_id: f"{exp.why}\n\nPros: {', '.join(exp.pros)}\nCons: {', '.join(exp.cons)}"

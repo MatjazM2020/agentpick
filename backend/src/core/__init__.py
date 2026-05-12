@@ -1,14 +1,14 @@
 """Core modules: state, config, and agent factory."""
 
-from backend.src.core.state import RecommendationState, ScoredModel, Message
-from backend.src.core.config import (
+from src.core.state import RecommendationState, ScoredModel, Message
+from src.core.config import (
     SystemConfig,
     ScoringConfig,
     RetrieverConfig,
     AgentConfig,
     APIConfig,
 )
-from backend.src.core.agent_factory import AgentFactory, create_agents
+from src.core.agent_factory import AgentFactory, create_agents
 
 __all__ = [
     "RecommendationState",

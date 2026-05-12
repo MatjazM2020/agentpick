@@ -18,12 +18,11 @@ Usage:
 import logging
 import time
 from typing import Optional
-from datetime import datetime
 
-from backend.src.core.state import RecommendationState, Message
-from backend.src.core.config import AgentConfig, ScoringConfig, RetrieverConfig
-from backend.src.core.agent_factory import create_agents
-from backend.src.agents import supervisor
+from src.core.state import RecommendationState, Message
+from src.core.config import AgentConfig, ScoringConfig, RetrieverConfig
+from src.core.agent_factory import create_agents
+from src.agents import supervisor
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +31,7 @@ logger = logging.getLogger(__name__)
 async def run_recommendation(
     query: str,
     state: Optional[RecommendationState] = None,
+    conversation_text: Optional[str] = None,
     config: Optional[AgentConfig] = None,
     scoring_config: Optional[ScoringConfig] = None,
     retriever_config: Optional[RetrieverConfig] = None,
@@ -42,8 +42,9 @@ async def run_recommendation(
     Handles both new requests and refinement requests.
     
     Args:
-        query: User query (new or refinement)
+        query: User query (new or refinement); usually the latest user turn
         state: Existing RecommendationState (for refinement). If None, creates new state.
+        conversation_text: All user turns for embedding / requirements; defaults to ``query`` if omitted
         config: AgentConfig (uses defaults if None)
         scoring_config: ScoringConfig (uses defaults if None)
         retriever_config: RetrieverConfig (uses defaults if None)
@@ -64,14 +65,20 @@ async def run_recommendation(
     # === Determine Request Type ===
     if state is None:
         # New request: create fresh state
-        state = RecommendationState(user_query=query)
+        ct = (conversation_text or "").strip() or query.strip()
+        state = RecommendationState(user_query=query.strip(), conversation_text=ct)
         request_type = "new"
         logger.info(f"[Pipeline] New request: {query[:100]}...")
     else:
         # Refinement: reuse existing state, append to conversation
         request_type = "refinement"
         state.messages.append(Message(role="user", content=query))
-        state.user_query = query
+        state.user_query = query.strip()
+        if conversation_text is not None and conversation_text.strip():
+            state.conversation_text = conversation_text.strip()
+        state.stopped_for_query_refinement = False
+        state.refinement_assistant_text = None
+        state.needs_score_refinement = False
         state.iteration += 1
         logger.info(f"[Pipeline] Refinement request (iteration={state.iteration}): {query[:100]}...")
     
@@ -107,8 +114,10 @@ async def run_recommendation(
         f"[Pipeline] Execution completed in {execution_time:.2f}s"
     )
     
-    # Add assistant message with summary
-    if state.final_recommendations:
+    # Add assistant message with summary (internal transcript; API body uses adapter)
+    if state.stopped_for_query_refinement and state.refinement_assistant_text:
+        summary = state.refinement_assistant_text
+    elif state.final_recommendations:
         summary = f"Found {len(state.final_recommendations)} recommendations. " \
                   f"Top model: {state.final_recommendations[0].model_id} " \
                   f"(score: {state.final_recommendations[0].score:.3f})"

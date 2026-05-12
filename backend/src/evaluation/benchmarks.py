@@ -13,9 +13,9 @@ import time
 from typing import List, Tuple
 from datetime import datetime
 
-from backend.src.services.recommendation_pipeline import run_recommendation
-from backend.src.core.state import RecommendationState
-from backend.src.evaluation.metrics import compute_evaluation_metrics
+from src.services.recommendation_pipeline import run_recommendation
+from src.core.state import RecommendationState
+from src.evaluation.metrics import compute_evaluation_metrics
 
 
 logger = logging.getLogger(__name__)
@@ -287,7 +287,7 @@ async def run_benchmark_subset(
         })
     
     # Latency stats only (no ground truth for custom queries)
-    from backend.src.evaluation.metrics import latency_stats
+    from src.evaluation.metrics import latency_stats
     latency = latency_stats(latencies)
     
     total_time = time.time() - start_time

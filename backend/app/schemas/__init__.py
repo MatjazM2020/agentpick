@@ -1,0 +1,1 @@
+"""OpenAI-compatible API schemas."""
