@@ -83,7 +83,7 @@ Open your browser and navigate to:
 http://localhost:3000
 ```
 
-You'll see the AgentPick chat interface. Start by typing a natural language query about what model you need:
+You'll see the AgentPick chat interface. Start by typing in a natural language query about what model you need:
 
 **Example queries:**
 - *"I need a small language model for mobile inference"*
