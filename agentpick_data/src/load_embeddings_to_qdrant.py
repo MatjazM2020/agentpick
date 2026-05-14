@@ -49,6 +49,9 @@ def load_parquet_to_qdrant(
     if "vector" not in first_df.columns:
         raise ValueError("Parquet must contain 'vector' column")
 
+    if "id" not in first_df.columns:
+        raise ValueError("Parquet must contain 'id' column for chunk identifiers")
+
     sample_vec = np.asarray(first_df["vector"].iloc[0], dtype=np.float32)
     vector_dim = sample_vec.shape[0]
 
@@ -74,7 +77,6 @@ def load_parquet_to_qdrant(
 
     # ---- upload ----
     logger.info("Starting upload...")
-    global_idx = 0
 
     for batch in tqdm(pf.iter_batches(batch_size=batch_size), desc="Uploading"):
         df = batch.to_pandas()
@@ -85,10 +87,18 @@ def load_parquet_to_qdrant(
         points = []
 
         for i, (vector, row) in enumerate(zip(vectors, df.itertuples(index=False))):
+            # Validate chunk ID exists and is not null
+            chunk_id = getattr(row, "id", None)
+            if chunk_id is None:
+                raise ValueError(
+                    f"Row {i} in batch has null or missing 'id'. "
+                    f"All parquet records must have a valid chunk ID."
+                )
+
             payload = {}
 
             for col in df.columns:
-                if col == "vector":
+                if col == "vector" or col == "id":
                     continue
 
                 val = getattr(row, col, None)
@@ -106,13 +116,11 @@ def load_parquet_to_qdrant(
 
             points.append(
                 PointStruct(
-                    id=global_idx,
+                    id=int(chunk_id),
                     vector=vector.tolist(),
                     payload=payload,
                 )
             )
-
-            global_idx += 1
 
         client.upsert(
             collection_name=collection_name,
