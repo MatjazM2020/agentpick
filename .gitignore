@@ -91,6 +91,8 @@ UI/backend/data/
 backend/logs/
 UI/backend/logs/
 
+docs/
+
 # Docker
 docker-compose.override.yaml
 .dockerignore
