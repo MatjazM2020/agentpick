@@ -14,6 +14,27 @@ services:
     networks:
       - agentpick
 
+  # Relational database for metadata and ranking
+  postgres:
+    image: postgres:16
+    container_name: agentpick-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: agentpick
+      POSTGRES_USER: agentpick
+      POSTGRES_PASSWORD: agentpick_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentpick"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentpick
+
   # AgentPick recommendation backend
   backend:
     build:
@@ -32,6 +53,12 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+      # PostgreSQL for metadata and relational retrieval
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=agentpick
+      - POSTGRES_USER=agentpick
+      - POSTGRES_PASSWORD=agentpick_password
       # OpenAI (Requirements Analyst + Synthesizer via Microsoft Agent Framework)
       - OPENAI_CHAT_MODEL_ID=${OPENAI_CHAT_MODEL_ID:-gpt-5.4-nano}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -40,6 +67,7 @@ services:
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
     depends_on:
       - qdrant
+      - postgres
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
@@ -91,6 +119,7 @@ volumes:
   qdrant_data:
   backend_data:
   ui_data:
+  postgres_data:
 
 networks:
   agentpick:

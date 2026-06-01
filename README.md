@@ -1,287 +1,327 @@
-# AgentPick: Agent-based system for recommending the choice of a language model
+# AgentPick
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-00a67e?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-OpenAI--compatible-00a67e?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Qdrant](https://img.shields.io/badge/Vector%20DB-Qdrant-dc244c)](https://qdrant.tech/)
+[![Docker](https://img.shields.io/badge/Run%20with-Docker%20Compose-2496ed?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-**AgentPick** is a multi-agent system that recommends suitable language models based on natural language user intent. Instead of manually searching through hundreds of models, describe what you need and let our AI agents find the perfect match for your use case.
+**AgentPick recommends Hugging Face language models from natural-language intent.** Describe what you need — task, latency, license, hardware — and a multi-agent pipeline retrieves candidates from a vector index, ranks them with transparent, deterministic scoring, and explains the results in a chat UI.
 
-## 🎯 What AgentPick Does
-
-Given a user query like *"I need a fast, lightweight model for summarizing legal documents,"* AgentPick:
-
-1. **Analyzes** your intent and extracts structured constraints (task, performance requirements, memory limits)
-2. **Retrieves** candidate models from a vector database using semantic search
-3. **Ranks** recommendations using explicit, transparent scoring criteria
-4. **Explains** why each model is recommended with detailed reasoning
-5. **Refines** recommendations through interactive conversation
-
-## 🏗️ Architecture Overview
-
-AgentPick is built with a modular, production-ready architecture:
-
-```
-┌─────────────────────────────────────────────┐
-│  Frontend (Open WebUI)                      │
-│  Chat-based interface on port 3000          │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  Backend API (FastAPI)                      │
-│  - Requirements Analyst (LLM)               │
-│  - Retriever (semantic search)              │
-│  - Evaluator (deterministic scoring)        │
-│  - Synthesizer (explanations & refinement)  │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  Qdrant Vector Database (port 6333)         │
-│  - Embeddings of 1000+ HuggingFace models   │
-└─────────────────────────────────────────────┘
-```
-
-### Key Components
-
-| Component | Purpose | Technology |
-|-----------|---------|-----------|
-| **Frontend** | Interactive chat interface | Open WebUI (Svelte/SvelteKit) |
-| **Backend** | Multi-agent pipeline | FastAPI (Python) + Microsoft Agent Framework |
-| **Vector DB** | Model embeddings storage | Qdrant |
-| **Data Pipeline** | Model metadata processing | Python, SentenceTransformers (BAAI/bge-large-en-v1.5) |
+The design is deliberately **hybrid**: LLMs handle interpretation and conversation, Python handles ranking and logic, and Qdrant handles retrieval. Recommendations are reproducible and explainable rather than hallucinated.
 
 ---
 
-## 🚀 Quick Start (Docker)
+## Table of contents
 
-### Prerequisites
-
-- Docker & Docker Compose
-- (Optional) OpenAI API key for enhanced recommendations
-
-### Step 1: Clone and Setup
-
-```bash
-cd /path/to/agentpick_dev
-export OPENAI_API_KEY="your-openai-key"  # Optional, but recommended
-```
-
-### Step 2: Start All Services
-
-```bash
-docker-compose up -d
-```
-
-This will start:
-- **Qdrant** vector database (port 6333)
-- **Backend API** (port 5000)
-- **Frontend UI** (port 3000)
-
-### Step 3: Access the Application
-
-Open your browser and navigate to:
-```
-http://localhost:3000
-```
-
-You'll see the AgentPick chat interface. Start by typing in a natural language query about what model you need:
-
-**Example queries:**
-- *"I need a small language model for mobile inference"*
-- *"Show me fast models for real-time translation"*
-- *"Which models are best for code generation?"*
-- *"I need an open-source model with commercial license"*
-
-### Step 4: Monitor Services
-
-Check service health:
-```bash
-# Check all services
-docker-compose ps
-
-# View logs from specific service
-docker-compose logs -f backend    # Backend logs
-docker-compose logs -f qdrant     # Qdrant logs
-docker-compose logs -f ui         # Frontend logs
-```
-
-### Step 5: Stop Services
-
-```bash
-docker-compose down
-```
-
-To preserve data volumes:
-```bash
-docker-compose down --remove-orphans
-```
-
-To clean up everything (including volumes):
-```bash
-docker-compose down -v
-```
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [Quickstart](#quickstart)
+- [Loading model data](#loading-model-data)
+- [Ranking model](#ranking-model)
+- [API](#api)
+- [Configuration](#configuration)
+- [Project structure](#project-structure)
+- [Local development](#local-development)
+- [Troubleshooting](#troubleshooting)
+- [Security](#security)
+- [Further reading](#further-reading)
+- [License](#license)
 
 ---
 
-## 📊 System Architecture Deep Dive
+## What it does
 
-### Agent Pipeline
+Given a user query, AgentPick:
 
-AgentPick uses a **deterministic multi-agent system** with strict role separation:
+1. **Analyzes** intent and extracts structured constraints (task type, hardware, latency, license, preferences).
+2. **Retrieves** candidate models via semantic search in **Qdrant** (the `hf_models` collection).
+3. **Scores** candidates with a transparent, deterministic ranking function — no LLM in the evaluator.
+4. **Synthesizes** natural-language explanations and supports multi-turn refinement in chat.
 
-1. **Supervisor**: Orchestrates the entire pipeline and enforces deterministic flow
-2. **Requirements Analyst**: Converts natural language into structured constraints
-   - Task category (summarization, QA, code generation, etc.)
-   - Performance constraints (latency, memory, throughput)
-   - Preferences (open-source, commercial, specific license)
-3. **Retriever**: Performs semantic search on the Qdrant vector database
-4. **Evaluator**: Scores models using transparent, deterministic rules (no LLM used)
-5. **Synthesizer**: Generates explanations and drives interactive refinement
+When a query is too vague, the pipeline asks targeted follow-up questions instead of guessing.
 
-### Data Pipeline
+---
 
-Model data flows through this process:
+## Architecture
 
+```mermaid
+flowchart TB
+  subgraph client [Client]
+    UI["Open WebUI · :3000"]
+  end
+
+  subgraph app [Application]
+    API["FastAPI backend · :5002<br/>OpenAI-compatible API"]
+    SUP["Supervisor<br/>(bounded orchestration)"]
+    RA["Requirements Analyst"]
+    RET["Retriever"]
+    EV["Evaluator"]
+    REF["Refinement Advisor"]
+    SYN["Synthesizer"]
+  end
+
+  subgraph data [Data layer]
+    QD[("Qdrant<br/>vectors + README chunks")]
+    PG[("PostgreSQL<br/>model metadata")]
+  end
+
+  UI -->|"/v1/chat/completions"| API
+  API --> SUP
+  SUP --> RA --> RET --> EV --> SYN
+  SUP -.->|"vague query"| REF
+  RET --> QD
+  PG -.->|"metadata load;<br/>relational ranking planned"| RET
 ```
-HuggingFace Hub
-    ↓
-Download metadata (README, tags, stats)
-    ↓
-Parse & chunk README content
-    ↓
-Generate embeddings (BAAI/bge-large-en-v1.5)
-    ↓
-Store in Qdrant vector database
-    ↓
-Available for semantic search
+
+### Components
+
+| Layer | Component | Technology |
+|-------|-----------|------------|
+| **Frontend** | Chat UI, auth, sessions | [Open WebUI](https://github.com/open-webui/open-webui) (Docker image built from `UI/`) |
+| **Backend** | Recommendation API, agent orchestration | FastAPI · [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (`agent-framework`) |
+| **Vectors** | README-chunk embeddings, semantic retrieval | Qdrant · `BAAI/bge-large-en-v1.5` |
+| **Metadata** | Per-model stats, tags, Qdrant `chunk_ids` | PostgreSQL 16 |
+| **Offline ETL** | Download HF cards, embed, export, load | `agentpick_data/` (Parquet → Qdrant + Postgres) |
+
+The backend exposes an **OpenAI-compatible** HTTP API, so Open WebUI (and any other OpenAI client) can use AgentPick like a custom model provider. Retrieval today runs against **Qdrant**; PostgreSQL holds the structured metadata loaded from the same Parquet pipeline and is wired into Compose for relational filtering and ranking as that path lands in the retriever.
+
+### Agent pipeline
+
+The pipeline runs sequentially with **bounded autonomy** — the supervisor allows at most two refinement loops, so there are no runaway agent cycles.
+
+| Agent | Role | Uses LLM? |
+|-------|------|-----------|
+| **Supervisor** | Runs each stage, enforces quality gates, bounds refinement (max 2 loops) | No |
+| **Requirements Analyst** | Natural language → task type, constraints, preferences (JSON) | Yes |
+| **Retriever** | Embed query, search Qdrant, deduplicate chunks by `model_id` | No |
+| **Evaluator** | Deterministic weighted scoring and ranking | No |
+| **Refinement Advisor** | Asks targeted follow-ups when intent is underspecified | Yes |
+| **Synthesizer** | Grounded natural-language recommendations and trade-offs | Yes |
+
+For backend internals (state, agent factory, config), see [`backend/ARCHITECTURE.md`](backend/ARCHITECTURE.md).
+
+---
+
+## Quickstart
+
+**Prerequisites:** Docker and Docker Compose. An [OpenAI API key](https://platform.openai.com/api-keys) is required for the LLM-backed agents (Requirements Analyst, Refinement Advisor, Synthesizer).
+
+```bash
+git clone <your-repo-url> agentpick
+cd agentpick
+
+export OPENAI_API_KEY="sk-..."                      # required
+export WEBUI_SECRET_KEY="$(openssl rand -hex 32)"   # recommended for production
+
+docker compose up -d --build
+```
+
+| Service | URL (host) | Role |
+|---------|------------|------|
+| **UI** (Open WebUI) | http://localhost:3000 | Chat interface |
+| **Backend** (FastAPI) | http://localhost:5002 | OpenAI-compatible recommendation API |
+| **Qdrant** | http://localhost:6333 | Semantic search over model README chunks |
+| **PostgreSQL** | `localhost:5433` | Model metadata (downloads, tags, `chunk_ids`) |
+
+1. Open **http://localhost:3000** and create a local account (the first user becomes admin).
+2. Start a chat — the UI is preconfigured to call the backend at `http://backend:5000/v1` inside Docker.
+3. Ask for a model, for example: *"I need a small open-source model for summarizing legal documents on CPU."*
+
+> **Important:** `docker compose` starts with **empty databases**. Recommendations only work once you vectorize Hugging Face models and load the stores — see [Loading model data](#loading-model-data).
+
+Stop the stack:
+
+```bash
+docker compose down       # keep volumes
+docker compose down -v    # remove volumes (Qdrant, Postgres, UI data)
 ```
 
 ---
 
-## 🔧 Configuration
+## Loading model data
 
-### Environment Variables
+The recommendation quality depends entirely on the indexed catalog. The offline pipeline downloads Hugging Face model cards, chunks and embeds them, and loads the result into both stores.
 
-Key configuration is set in `docker-compose.yaml`:
-
-```yaml
-environment:
-  # Backend
-  - OPENAI_CHAT_MODEL_ID=gpt-4o          # LLM for Requirements Analyst & Synthesizer
-  - OPENAI_API_KEY=${OPENAI_API_KEY}     # Your OpenAI API key
-  - QDRANT_URL=http://qdrant:6333        # Vector database endpoint
-  
-  # Frontend
-  - OPENAI_API_BASE_URL=http://backend:5000/v1
-  - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+```text
+Hugging Face Hub
+  → download README + metadata           (agentpick_data/hf_vectorizer)
+  → chunk + embed (BAAI/bge-large-en-v1.5)
+  → embeddings.parquet
+       ├─ load_embeddings_to_qdrant.py   → Qdrant (semantic search)
+       └─ initialize_postgres.py         → PostgreSQL (metadata + chunk_ids)
 ```
 
-### Custom Configuration
-
-For advanced configuration, edit:
-- **Backend**: `backend/app/main.py` (FastAPI initialization)
-- **Frontend**: `UI/src/lib/config.ts` (UI settings)
-- **Qdrant**: `docker-compose.yaml` (vector database settings)
-
----
-
-## 📚 Project Structure
-
-```
-agentpick_dev/
-├── README.md                          # This file
-├── docker-compose.yaml                # Service orchestration
-│
-├── backend/                           # FastAPI backend
-│   ├── Dockerfile
-│   ├── main.py
-│   ├── requirements.txt
-│   ├── app/
-│   │   ├── main.py                   # FastAPI app factory
-│   │   ├── routes/                   # API endpoints
-│   │   ├── schemas/                  # Request/response schemas
-│   │   └── services/                 # Business logic
-│   └── src/
-│       ├── agents/                   # Agent implementations
-│       ├── api/                      # API utilities
-│       ├── core/                     # Core logic (retrieval, scoring)
-│       ├── evaluation/               # Evaluation metrics
-│       └── services/                 # External service integrations
-│
-├── UI/                                # Frontend (Open WebUI)
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── src/
-│   │   ├── app.html                  # Main HTML
-│   │   ├── routes/                   # Page components
-│   │   └── lib/                      # Utilities & components
-│   └── build/                        # Production build output
-│
-├── agentpick_data/                   # Data processing pipeline
-│   ├── README.md
-│   ├── requirements.txt
-│   ├── src/hf_vectorizer/           # Model vectorization
-│   │   ├── vectorizer.py            # Main pipeline
-│   │   ├── hf_client.py             # HuggingFace API client
-│   │   ├── embeddings.py            # Embedding generation
-│   │   ├── parsing.py               # README parsing
-│   │   └── storage.py               # Parquet storage
-│   └── scripts/
-│       ├── run_vectorize.sh         # Local execution
-│       ├── start_qdrant.sh          # Qdrant startup
-│       └── submit_vectorize.sh      # HPC job submission
-│
-└── docs/                              # Documentation
-    ├── project.md                    # Detailed project overview
-    └── agent_patterns.py             # Agent workflow patterns
-```
-
----
-
-## 🔌 API Reference
-
-The backend exposes an OpenAI-compatible API on `http://localhost:5000/v1`.
-
-### Chat Endpoint
+With the stack running (Qdrant on `6333`, Postgres on `5433`):
 
 ```bash
-curl -X POST http://localhost:5000/v1/chat/completions \
+cd agentpick_data
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+export PYTHONPATH=src
+
+# 1) Generate embeddings.parquet (long-running; details in agentpick_data/README.md)
+bash scripts/run_vectorize.sh
+
+# 2) Load vectors into Qdrant (collection: hf_models)
+python src/load_embeddings_to_qdrant.py
+
+# 3) Initialize the Postgres schema and load metadata
+#    (Compose maps Postgres to host port 5433)
+POSTGRES_PORT=5433 python src/initialize_postgres.py
+```
+
+`initialize_postgres.py` waits for Postgres, applies [`init_postgres.sql`](agentpick_data/src/init_postgres.sql), aggregates the Parquet by `model_id`, and upserts one row per model (downloads, likes, tags, `pipeline_tag`, and the list of Qdrant `chunk_ids`). Default credentials match `docker-compose.yaml` (`agentpick` / `agentpick_password`).
+
+Full details, SLURM/HPC submission, and tuning live in [`agentpick_data/README.md`](agentpick_data/README.md).
+
+---
+
+## Ranking model
+
+Ranking is the core contribution and runs **entirely in Python** — deterministic, reproducible, and fully logged. After Qdrant returns candidate chunks (deduplicated to models by averaging chunk similarity), the evaluator computes a weighted composite score:
+
+```text
+final_score = w_semantic · similarity
+            + w_popularity · popularity
+            + w_recency · recency
+            + w_hardware · hardware_fit
+            + w_license · license_match
+            + w_inference · inference_profile
+            + w_benchmark · benchmark_score
+```
+
+Default weights (sum to `1.0`, validated at startup in [`backend/src/core/config.py`](backend/src/core/config.py)):
+
+| Component | Weight | Signal |
+|-----------|:------:|--------|
+| `semantic_similarity` | 0.22 | Cosine match between the query and indexed README chunks |
+| `popularity` | 0.22 | Downloads and likes (normalized, capped) |
+| `license_match` | 0.18 | Compliance with a requested permissive / commercial-friendly license |
+| `inference_profile` | 0.18 | CPU / quantization friendliness heuristics (tags, `gguf`/`onnx`, instruct/chat fit) |
+| `hardware_fit` | 0.13 | Model-size and hardware-constraint alignment |
+| `recency` | 0.04 | Time since last update on the hub |
+| `benchmark_score` | 0.03 | Benchmark signals when available |
+
+Weights and thresholds are configurable per request. The supervisor also enforces quality gates: if the top candidate's semantic similarity or composite score is too low, it relaxes filters and re-retrieves (bounded to two iterations) and surfaces clarifying follow-up questions.
+
+---
+
+## API
+
+Base URL on the host: **http://localhost:5002**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat/completions` | Get recommendations (supports streaming) |
+| `GET` | `/v1/models` | List models in OpenAI shape (id: `agentpick-recommender`) |
+| `GET` | `/health` | Liveness probe |
+| — | `/docs`, `/redoc` | Interactive OpenAPI documentation |
+
+```bash
+curl -s http://localhost:5002/health
+
+curl -s http://localhost:5002/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy" \
   -d '{
-    "model": "agentpick",
-    "messages": [
-      {
-        "role": "user",
-        "content": "I need a model for question answering"
-      }
-    ],
-    "temperature": 0.7,
-    "max_tokens": 2000
+    "model": "agentpick-recommender",
+    "messages": [{"role": "user", "content": "Fast open model for QA on CPU"}]
   }'
 ```
 
-### Health Check
+Inside the Docker network the UI reaches the backend at `http://backend:5000/v1` (container port `5000`).
+
+---
+
+## Configuration
+
+Environment variables consumed by the backend (defaults set in `docker-compose.yaml`):
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `OPENAI_API_KEY` | backend | LLM calls for the analyst, refinement advisor, and synthesizer (**required**) |
+| `OPENAI_CHAT_MODEL_ID` | backend | Chat model for agents (default `gpt-5.4-nano`) |
+| `OPENAI_BASE_URL` | backend | Optional OpenAI-compatible / Azure-style endpoint |
+| `WEBUI_SECRET_KEY` | ui | Session signing key — set a strong value in production |
+| `QDRANT_URL` | backend | Qdrant endpoint (`http://qdrant:6333` in Compose) |
+| `POSTGRES_*` | backend | Metadata DB connection (`HOST`, `PORT`, `DB`, `USER`, `PASSWORD`) |
+| `LOG_LEVEL` | backend | Logging verbosity (default `INFO`) |
+
+Example `.env` in the repository root (read by Compose):
 
 ```bash
-curl http://localhost:5000/health
+OPENAI_API_KEY=sk-...
+OPENAI_CHAT_MODEL_ID=gpt-5.4-nano
+WEBUI_SECRET_KEY=change-me-in-production
+```
+
+Useful Docker commands:
+
+```bash
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f ui
+docker compose build --no-cache backend ui
 ```
 
 ---
 
-## 🛠️ Development
+## Project structure
 
-### Local Backend Development
+```text
+agentpick/
+├── docker-compose.yaml        # UI, backend, Qdrant, Postgres
+├── README.md
+│
+├── backend/                   # FastAPI recommendation service
+│   ├── Dockerfile
+│   ├── app/                   # Routes, schemas, OpenAI adapter
+│   ├── src/agents/            # Supervisor, analyst, retriever, evaluator, …
+│   ├── src/core/              # State, config, embeddings, agent factory
+│   ├── src/evaluation/        # Metrics and benchmarks
+│   └── ARCHITECTURE.md        # Backend design reference
+│
+├── UI/                        # Open WebUI (frontend + its own backend)
+│   └── Dockerfile             # Built as the `ui` service
+│
+├── agentpick_data/            # HF vectorization and DB loaders
+│   ├── src/hf_vectorizer/     # Download, parse, chunk, embed
+│   ├── src/load_embeddings_to_qdrant.py
+│   ├── src/initialize_postgres.py
+│   └── src/init_postgres.sql
+│
+└── docs/                      # Design notes and patterns
+```
+
+---
+
+## Local development
+
+### Backend
 
 ```bash
 cd backend
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-python main.py
+
+export OPENAI_API_KEY=sk-...
+export QDRANT_URL=http://localhost:6333
+
+uvicorn app.main:app --reload --host 0.0.0.0 --port 5000
 ```
 
-The backend will start on `http://localhost:5000`.
+API: http://localhost:5000 · docs at `/docs`.
 
-### Local Frontend Development
+### Frontend (Open WebUI)
+
+**Docker (matches production):**
+
+```bash
+docker compose up -d ui backend qdrant postgres
+```
+
+**Native dev server (hot reload):**
 
 ```bash
 cd UI
@@ -289,173 +329,55 @@ npm install
 npm run dev
 ```
 
-The frontend will start on `http://localhost:5173` with hot reload.
+Dev UI: http://localhost:5173 — point the OpenAI settings at `http://localhost:5000/v1` (or `5002` if only the backend container port is mapped).
 
-### Data Vectorization (HuggingFace Models)
-
-To generate new embeddings for model recommendations:
+### Data tooling
 
 ```bash
 cd agentpick_data
-pip install -r requirements.txt
-
-# Start Qdrant
-./scripts/start_qdrant.sh
-
-# Run vectorization
-./scripts/run_vectorize.sh
+source venv/bin/activate
+export PYTHONPATH=src
+bash scripts/run_vectorize.sh
+python src/load_embeddings_to_qdrant.py
+POSTGRES_PORT=5433 python src/initialize_postgres.py
 ```
 
 ---
 
-## 📝 API Documentation
+## Troubleshooting
 
-Once services are running, access interactive API docs:
-
-- **Swagger UI**: `http://localhost:5000/docs`
-- **ReDoc**: `http://localhost:5000/redoc`
-
----
-
-## 🧪 Testing
-
-### Backend Tests
+| Symptom | What to check |
+|---------|---------------|
+| Empty or poor recommendations | Is the Qdrant collection populated? `curl http://localhost:6333/collections` |
+| Backend unhealthy | `docker compose logs backend`; confirm `OPENAI_API_KEY` is set |
+| UI cannot reach backend | `docker compose ps`; inside the UI container the backend host is `backend:5000` |
+| Postgres connection from host | Use port **5433**, not 5432 |
+| Changes not reflected | `docker compose build backend ui && docker compose up -d` |
 
 ```bash
-cd backend
-pytest tests/
-```
-
-### Frontend Tests
-
-```bash
-cd UI
-npm run test:frontend
-```
-
-### E2E Tests (Cypress)
-
-```bash
-cd UI
-npm run cy:open
+curl http://localhost:6333/healthz
+docker compose exec backend curl -s http://qdrant:6333/healthz
 ```
 
 ---
 
-## 📋 Troubleshooting
+## Security
 
-### Services won't start
-
-```bash
-# Check Docker daemon
-docker ps
-
-# View detailed logs
-docker-compose logs
-
-# Rebuild images
-docker-compose build --no-cache
-```
-
-### Backend can't connect to Qdrant
-
-```bash
-# Verify Qdrant is running
-docker-compose ps | grep qdrant
-
-# Check Qdrant health
-curl http://localhost:6333/health
-```
-
-### Frontend shows errors
-
-```bash
-# Clear browser cache and refresh
-# Or, restart with fresh volumes
-docker-compose down -v
-docker-compose up -d
-```
-
-### Out of memory
-
-Increase Docker memory allocation in Docker Desktop settings, then restart:
-```bash
-docker-compose restart
-```
+- Set a strong `WEBUI_SECRET_KEY`; never commit secrets to the repository.
+- Treat `OPENAI_API_KEY` as sensitive and load it from the environment or a secrets manager.
+- Restrict exposed ports and place TLS in front of the UI and API for any public deployment.
+- Rotate the default PostgreSQL credentials before going to production.
 
 ---
 
-## 🔐 Security Notes
+## Further reading
 
-⚠️ **Production Deployment:**
-
-1. Change `WEBUI_SECRET_KEY` in `.env`:
-   ```bash
-   WEBUI_SECRET_KEY=$(openssl rand -hex 32)
-   ```
-
-2. Set strong `QDRANT_API_KEY`
-
-3. Use environment variables for sensitive data (never commit `.env`)
-
-4. Enable HTTPS/TLS in production
-
-5. Restrict API access with authentication
+- [Backend architecture](backend/ARCHITECTURE.md)
+- [Data vectorization pipeline](agentpick_data/README.md)
+- [Project design notes](docs/project.md)
 
 ---
 
-## 📖 Further Reading
+## License
 
-- [Project Overview](docs/project.md) - Detailed architecture and design decisions
-- [Agent Patterns](docs/agent_patterns.py) - Implementation patterns for the multi-agent system
-- [Data Vectorization](agentpick_data/README.md) - HuggingFace model embedding generation
-- [Workflow Patterns](docs/workflow_patterns.py) - Common usage workflows
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Commit changes: `git commit -m "Add feature"`
-4. Push to branch: `git push origin feature/your-feature`
-5. Submit a pull request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License. See `LICENSE` file for details.
-
----
-
-## 💬 Support
-
-For issues, questions, or suggestions:
-
-1. Check existing [GitHub Issues](https://github.com/your-repo/issues)
-2. Review the [Troubleshooting](#troubleshooting) section
-3. Open a new issue with:
-   - Clear description
-   - Steps to reproduce
-   - Docker logs output
-   - System information (OS, Docker version)
-
----
-
-## 🎓 Citation
-
-If you use AgentPick in research, please cite:
-
-```bibtex
-@software{agentpick2024,
-  title={AgentPick: Deterministic Multi-Agent System for Language Model Recommendation},
-  year={2024},
-  url={https://github.com/your-repo}
-}
-```
-
----
-
-**Last Updated:** May 2024
-**Status:** Active Development
+MIT — see [`LICENSE`](UI/LICENSE) and the repository license files.
