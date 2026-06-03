@@ -109,14 +109,12 @@ Rules:
             parts = [out.intro.strip(), ""]
             if out.follow_up_questions:
                 parts.append("Questions:")
-                for q in out.follow_up_questions:
-                    parts.append(f"- {q.strip()}")
+                parts.extend(f"- {q.strip()}" for q in out.follow_up_questions)
                 parts.append("")
             if out.suggested_user_inputs:
                 parts.append("You could reply with something like:")
-                for s in out.suggested_user_inputs:
-                    parts.append(f"- {s.strip()}")
-            text = "\n".join(p for p in parts if p is not None).strip()
+                parts.extend(f"- {s.strip()}" for s in out.suggested_user_inputs)
+            text = "\n".join(parts).strip()
             state.refinement_assistant_text = text
             state.follow_up_questions = [q.strip() for q in out.follow_up_questions if q.strip()]
             state.stopped_for_query_refinement = True

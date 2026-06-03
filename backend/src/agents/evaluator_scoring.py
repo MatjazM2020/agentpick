@@ -88,10 +88,8 @@ def _model_license_is_permissive(lic: str) -> bool:
         return False
     if _model_license_is_restrictive(lic):
         return False
-    for p in _PERMISSIVE_MODEL_LICENSES:
-        if p in lic.replace("_", "-"):
-            return True
-    return lic in _PERMISSIVE_MODEL_LICENSES
+    normalized = lic.replace("_", "-")
+    return any(p in normalized for p in _PERMISSIVE_MODEL_LICENSES) or lic in _PERMISSIVE_MODEL_LICENSES
 
 
 def _parse_license_list(raw: Any) -> list[str]:
@@ -159,24 +157,17 @@ def license_match_and_compliance(
 def estimate_param_billions(model_id: str, metadata: dict) -> Optional[float]:
     """Best-effort parameter count in billions from id / card text (may be None)."""
     blob = f"{model_id} {_tags_blob(metadata)}".lower()
-    m = re.search(r"(\d+\.?\d*)\s*b\b", blob)
-    if m:
-        try:
-            return float(m.group(1))
-        except ValueError:
-            pass
-    m = re.search(r"(?<![a-z])(\d+)m\b", blob)
-    if m:
-        try:
-            return float(m.group(1)) / 1000.0
-        except ValueError:
-            pass
-    m = re.search(r"(\d+)\s*billion", blob)
-    if m:
-        try:
-            return float(m.group(1))
-        except ValueError:
-            pass
+    for pattern, divisor in (
+        (r"(\d+\.?\d*)\s*b\b", 1.0),
+        (r"(?<![a-z])(\d+)m\b", 1000.0),
+        (r"(\d+)\s*billion", 1.0),
+    ):
+        m = re.search(pattern, blob)
+        if m:
+            try:
+                return float(m.group(1)) / divisor
+            except ValueError:
+                pass
     return None
 
 
@@ -339,12 +330,12 @@ def qualitative_score_phrases(
 ) -> dict[str, str]:
     """User-facing short phrases — no decimal component scores."""
 
-    def band(v: float, hi: float, mid: float) -> str:
+    def pick(v: float, hi: float, mid: float, strong: str, moderate: str, weak: str) -> str:
         if v >= hi:
-            return "strong"
+            return strong
         if v >= mid:
-            return "moderate"
-        return "weak"
+            return moderate
+        return weak
 
     sim = breakdown.get("semantic_similarity", 0.0)
     pop = breakdown.get("popularity", 0.0)
@@ -354,32 +345,23 @@ def qualitative_score_phrases(
     inf = breakdown.get("inference_profile", 0.0)
 
     phrases = {
-        "match_to_request": (
-            "Strong match between your wording and this model's indexed chunks."
-            if band(sim, 0.72, 0.45) == "strong"
-            else (
-                "Moderate textual match to your request."
-                if band(sim, 0.72, 0.45) == "moderate"
-                else "Looser match to your request; still worth comparing if constraints are tight."
-            )
+        "match_to_request": pick(
+            sim, 0.72, 0.45,
+            "Strong match between your wording and this model's indexed chunks.",
+            "Moderate textual match to your request.",
+            "Looser match to your request; still worth comparing if constraints are tight.",
         ),
-        "community_usage": (
-            "High community usage (downloads/likes) on the hub."
-            if band(pop, 0.65, 0.35) == "strong"
-            else (
-                "Moderate hub traction."
-                if band(pop, 0.65, 0.35) == "moderate"
-                else "Smaller or newer footprint on the hub."
-            )
+        "community_usage": pick(
+            pop, 0.65, 0.35,
+            "High community usage (downloads/likes) on the hub.",
+            "Moderate hub traction.",
+            "Smaller or newer footprint on the hub.",
         ),
-        "freshness": (
-            "Recently touched on the hub."
-            if band(rec, 0.65, 0.4) == "strong"
-            else (
-                "Average age on the hub."
-                if band(rec, 0.65, 0.4) == "moderate"
-                else "Older snapshot by hub dates — less weight in ranking now."
-            )
+        "freshness": pick(
+            rec, 0.65, 0.4,
+            "Recently touched on the hub.",
+            "Average age on the hub.",
+            "Older snapshot by hub dates — less weight in ranking now.",
         ),
         "hardware_fit": (
             "Tag/text signals align with a CPU‑friendly or small‑footprint deployment."

@@ -1,19 +1,12 @@
 """
 Synthesizer agent.
 
-Generates human-readable explanations for top-K scored models.
-Uses LLM to convert scores and metadata into clear reasoning.
+Uses an LLM to turn top-K scored models and metadata into concise, factual
+explanations (why/pros/cons), retrying on parse failure and falling back to a
+minimal explanation when needed.
 
-CRITICAL RULE: NO hallucination. All explanations must be grounded in
-provided metadata and scores. No invented features or capabilities.
-
-Responsibilities:
-- Take top-K scored models from state.scored_models
-- Generate concise, factual explanations
-- Explain trade-offs vs constraints
-- Validate output for hallucination
-- Retry on parse failure (up to N=2)
-- Store in state.final_recommendations
+CRITICAL RULE: NO hallucination. All explanations must be grounded in the
+provided metadata and scores; no invented features or capabilities.
 """
 
 import json
@@ -47,22 +40,13 @@ class SynthesizerOutput(BaseModel):
     
 
 def _format_model_context(scored_model: ScoredModel, user_constraints: dict) -> str:
-    """
-    Format a single model's information for LLM context.
-    
-    Args:
-        scored_model: The scored model with metadata
-        user_constraints: User constraints for comparison
-        
-    Returns:
-        Formatted string with model facts
-    """
+    """Format a single model's facts and ranking signals for LLM context."""
     metadata = scored_model.metadata
     se = scored_model.score_explanations or {}
     facts = scored_model.inference_facts or {}
     tags = metadata.get("tags", [])
     tag_s = ", ".join(str(t) for t in (tags if isinstance(tags, list) else [tags]))
-    
+
     se_lines = "\n".join(f"- {k}: {v}" for k, v in se.items()) if se else "(not available)"
     fact_lines = "\n".join(f"- {k}: {v}" for k, v in facts.items()) if facts else "(not available)"
 
@@ -93,51 +77,29 @@ def _validate_no_hallucination(
     explanation: RecommendationExplanation,
     scored_model: ScoredModel
 ) -> bool:
-    """
-    Validate that explanation doesn't hallucinate facts.
-    
-    Checks:
-    - Model ID matches
-    - No invented specs
-    - References to actual metadata
-    - Numeric claims are grounded in data
-    
-    Args:
-        explanation: The generated explanation
-        scored_model: The ground truth model
-        
-    Returns:
-        True if explanation is valid (grounded), False if hallucinated
-    """
-    # Check model ID
+    """Return False if the explanation hallucinates (id/score mismatch or ungrounded numbers)."""
     if explanation.model_id != scored_model.model_id:
         logger.warning(
             f"[Synthesizer] Hallucination detected: model_id mismatch. "
             f"Expected {scored_model.model_id}, got {explanation.model_id}"
         )
         return False
-    
-    # Check score matches (allow small rounding difference)
+
+    # Allow small rounding difference
     if abs(explanation.score - scored_model.score) > 0.01:
         logger.warning(
             f"[Synthesizer] Hallucination detected: score mismatch. "
             f"Expected {scored_model.score}, got {explanation.score}"
         )
         return False
-    
-    # Basic check: explanation should reference actual metadata
-    metadata = scored_model.metadata
-    why_lower = explanation.why.lower()
-    
-    # If explanation mentions specific numbers, verify they exist
-    # (This is a simple heuristic check)
-    if "download" in why_lower and metadata.get("downloads") == 0:
+
+    if "download" in explanation.why.lower() and scored_model.metadata.get("downloads") == 0:
         logger.warning(
-            f"[Synthesizer] Potential hallucination: mentions downloads "
-            f"but model has 0 downloads"
+            "[Synthesizer] Potential hallucination: mentions downloads "
+            "but model has 0 downloads"
         )
         return False
-    
+
     return True
 
 
@@ -148,28 +110,14 @@ async def _generate_explanations(
     agent: Agent,
     max_retries: int = 2
 ) -> Optional[SynthesizerOutput]:
-    """
-    Call LLM agent to generate explanations.
-    
-    Args:
-        scored_models: Top-K models to explain (already sorted)
-        user_constraints: User constraints for context
-        user_preferences: User preferences for context
-        agent: The Synthesizer agent
-        max_retries: Number of retries on parse failure
-        
-    Returns:
-        SynthesizerOutput or None on failure
-    """
-    
-    # Format model contexts
+    """Call the LLM agent to generate explanations; returns None after ``max_retries`` failures."""
     model_contexts = "\n\n---\n\n".join(
         _format_model_context(m, user_constraints) for m in scored_models
     )
-    
+
     constraints_str = json.dumps(user_constraints, indent=2) if user_constraints else "None"
     preferences_str = json.dumps(user_preferences, indent=2) if user_preferences else "None"
-    
+
     prompt = f"""You are a recommendation synthesis agent for language models.
 
 Your job is to explain why each recommended model is a good fit.
@@ -240,11 +188,9 @@ CRITICAL RULES:
             run_result = await agent.run(prompt)
             raw_output = agent_run_text(run_result)
             logger.debug(f"[Synthesizer] Attempt {attempt}: Raw output length={len(raw_output)}")
-            
-            # Parse JSON
-            # Try to extract JSON from potential markdown
+
+            # Extract JSON from a potential markdown code block
             if "```" in raw_output:
-                # Extract from markdown code block
                 start = raw_output.find("```json") + 7
                 end = raw_output.find("```", start)
                 if end == -1:
@@ -253,24 +199,20 @@ CRITICAL RULES:
                 json_str = raw_output[start:end].strip()
             else:
                 json_str = raw_output.strip()
-            
+
             output_dict = json.loads(json_str)
             output = SynthesizerOutput(**output_dict)
-            
+
             logger.info(f"[Synthesizer] Successfully parsed output: {len(output.recommendations)} recommendations")
             return output
-            
-        except json.JSONDecodeError as e:
-            logger.warning(f"[Synthesizer] Attempt {attempt}: JSON parse failed: {e}")
+
+        except (json.JSONDecodeError, ValidationError) as e:
+            kind = "JSON parse" if isinstance(e, json.JSONDecodeError) else "Validation"
+            logger.warning(f"[Synthesizer] Attempt {attempt}: {kind} failed: {e}")
             if attempt < max_retries:
                 logger.info(f"[Synthesizer] Retrying (attempt {attempt + 1}/{max_retries})")
             continue
-        except ValidationError as e:
-            logger.warning(f"[Synthesizer] Attempt {attempt}: Validation failed: {e}")
-            if attempt < max_retries:
-                logger.info(f"[Synthesizer] Retrying (attempt {attempt + 1}/{max_retries})")
-            continue
-    
+
     logger.error(f"[Synthesizer] Failed to generate explanations after {max_retries} attempts")
     return None
 
@@ -278,22 +220,11 @@ CRITICAL RULES:
 def _build_fallback_recommendations(
     scored_models: list[ScoredModel]
 ) -> list[RecommendationExplanation]:
-    """
-    Build minimal fallback explanations when LLM fails.
-    
-    Uses only the score breakdown to construct a basic explanation.
-    
-    Args:
-        scored_models: Top-K models
-        
-    Returns:
-        Fallback explanations
-    """
+    """Build minimal fallback explanations from score breakdowns when the LLM fails."""
     logger.warning("[Synthesizer] Building fallback recommendations")
-    
+
     recommendations = []
     for model in scored_models:
-        breakdown = model.score_breakdown
         se = model.score_explanations or {}
         why = (
             f"{se.get('match_to_request', 'Ranked for your query')} "
@@ -309,17 +240,15 @@ def _build_fallback_recommendations(
             se.get("freshness", "Recency versus the rest of the shortlist is noted in ranking signals."),
             "Verify quantization artifacts and CPU benchmarks on your own hardware before locking in.",
         ]
-        
-        rec = RecommendationExplanation(
+        recommendations.append(RecommendationExplanation(
             model_id=model.model_id,
             score=model.score,
             why=why,
             pros=pros,
             cons=cons,
-            score_breakdown=breakdown
-        )
-        recommendations.append(rec)
-    
+            score_breakdown=model.score_breakdown,
+        ))
+
     return recommendations
 
 
@@ -329,31 +258,21 @@ async def run(
     top_k: int = 3
 ) -> RecommendationState:
     """
-    Generate human-readable explanations for top-K scored models.
-    
-    Calls LLM agent to convert scores/metadata into clear reasoning.
-    Validates for hallucination. Falls back to minimal explanation on failure.
-    
-    Args:
-        state: RecommendationState with scored_models populated
-        agent: Synthesizer agent configured with instructions
-        top_k: Number of top models to explain
-        
-    Returns:
-        Updated state with final_recommendations and explanations populated
+    Generate human-readable explanations for the top-K scored models.
+
+    Calls the LLM agent, validates against hallucination, and falls back to a
+    minimal explanation on failure. Populates ``state.final_recommendations``,
+    ``state.explanations`` and ``state.follow_up_questions``.
     """
-    
     if not state.scored_models:
         logger.warning("[Synthesizer] No scored models to explain")
         state.final_recommendations = []
         state.explanations = {}
         return state
-    
-    # Take top-K
+
     top_models = state.scored_models[:top_k]
     logger.info(f"[Synthesizer] Generating explanations for top {len(top_models)} models")
-    
-    # Call LLM
+
     output = await _generate_explanations(
         top_models,
         state.constraints,
@@ -366,10 +285,8 @@ async def run(
         logger.warning("[Synthesizer] LLM generation failed, using fallback")
         explanations_list = _build_fallback_recommendations(top_models)
     else:
-        # Validate each explanation
         explanations_list = []
         for exp in output.recommendations:
-            # Find the original model
             original = next((m for m in top_models if m.model_id == exp.model_id), None)
             if not original:
                 logger.warning(f"[Synthesizer] Model {exp.model_id} not in input set, skipping")
@@ -384,15 +301,11 @@ async def run(
                 cons=exp.cons,
                 score_breakdown=merged_bd,
             )
-            
-            # Validate against hallucination
-            if not _validate_no_hallucination(exp, original):
-                logger.warning(f"[Synthesizer] Hallucination detected in {exp.model_id}, using fallback")
-                # Use fallback for this model
-                fallback = _build_fallback_recommendations([original])[0]
-                explanations_list.append(fallback)
-            else:
+            if _validate_no_hallucination(exp, original):
                 explanations_list.append(exp)
+            else:
+                logger.warning(f"[Synthesizer] Hallucination detected in {exp.model_id}, using fallback")
+                explanations_list.append(_build_fallback_recommendations([original])[0])
 
     # LLM may omit or reorder models; align to ranked top_models (up to top_k)
     by_id = {e.model_id: e for e in explanations_list}
@@ -425,7 +338,6 @@ async def run(
         for exp in explanations_list
     }
     
-    # Populate follow-up questions from LLM output
     if output and output.follow_up_questions:
         state.follow_up_questions = output.follow_up_questions
     else:

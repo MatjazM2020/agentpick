@@ -216,8 +216,9 @@ def insert_models_batch(conn: psycopg2.extensions.connection, models: list, batc
 
 def main():
     """Main entry point."""
+
     parser = argparse.ArgumentParser(
-        description='Load embeddings parquet into PostgreSQL metadata table'
+        description='Load embeddings parquet into PostgreSQL'
     )
     parser.add_argument(
         '--parquet-path',

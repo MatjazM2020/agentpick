@@ -27,11 +27,25 @@ from src.core.state import RecommendationState
 logger = logging.getLogger(__name__)
 
 
+class PopularityIntent(BaseModel):
+    """How (and whether) the query depends on popularity metrics, for DB routing."""
+    mode: str = Field(
+        default="none",
+        description="'none' (semantic only), 'popularity_only', or 'hybrid'",
+    )
+    sort_by: Optional[str] = Field(
+        default=None, description="'downloads', 'likes', or null"
+    )
+    min_downloads: Optional[int] = Field(default=None)
+    min_likes: Optional[int] = Field(default=None)
+
+
 class RequirementsOutput(BaseModel):
     """Validated output from requirements extraction."""
     task_type: str = Field(description="Inferred task type")
     constraints: dict = Field(default_factory=dict)
     preferences: dict = Field(default_factory=dict)
+    popularity: PopularityIntent = Field(default_factory=PopularityIntent)
     confidence: float = Field(default=1.0)
 
 
@@ -42,7 +56,8 @@ _SAFE_DEFAULTS = {
     "preferences": {
         "speed_vs_accuracy": "balanced",
         "model_size": "medium"
-    }
+    },
+    "popularity": {"mode": "none"},
 }
 
 
@@ -52,17 +67,10 @@ async def run(
     max_retries: int = 3
 ) -> RecommendationState:
     """
-    Extract structured requirements from user query.
-    
-    Args:
-        state: RecommendationState with user_query populated
-        agent: RequirementsAnalyst agent configured with instructions
-        max_retries: Number of retries on JSON parse failure
-        
-    Returns:
-        Updated state with task_type, constraints, preferences populated
+    Extract structured requirements (task_type, constraints, preferences) from
+    the user query, retrying on parse failure and using safe defaults on final
+    failure. Returns the updated state.
     """
-    
     query = state.natural_language_context_for_requirements() or state.user_query
     logger.info(f"[RequirementsAnalyst] Processing context ({len(query)} chars)")
     
@@ -85,6 +93,12 @@ Return ONLY a valid JSON object (no markdown, no explanations) with this structu
     "model_size": "string (tiny, small, medium, large)",
     "popularity": "boolean (optional)"
   }},
+  "popularity": {{
+    "mode": "none | popularity_only | hybrid",
+    "sort_by": "downloads | likes | null",
+    "min_downloads": "number or null",
+    "min_likes": "number or null"
+  }},
   "confidence": "number (0.0 to 1.0)"
 }}
 
@@ -94,6 +108,16 @@ Rules:
 3. For task_type, make best inference or use "general" if unclear.
 4. Set confidence to 1.0 if all fields clear, lower if guessing.
 5. Be strict: only extract explicitly mentioned or clearly implied requirements.
+6. popularity.mode rules (decide how the request depends on popularity metrics):
+   - "popularity_only": the request is primarily about popularity with no real semantic task,
+     e.g. "most popular models", "top/trending/best-known models", "models with the most downloads",
+     "rank/sort models by downloads or likes". Set sort_by to "downloads" (default) or "likes".
+   - "hybrid": the request needs BOTH semantic relevance AND popularity,
+     e.g. "best coding models with lots of downloads", "popular summarization models".
+     Set sort_by when a metric is named.
+   - "none": no popularity signal (default).
+   - Thresholds: ">100k downloads" -> min_downloads=100000; "at least 1,000 likes" -> min_likes=1000.
+     Leave thresholds null when none are stated. A stated threshold implies popularity_only or hybrid.
 """
     
     raw_output = None
@@ -102,28 +126,25 @@ Rules:
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"[RequirementsAnalyst] Attempt {attempt}/{max_retries}")
-            
-            # Run agent
+
             run_result = await agent.run(prompt)
             raw_output = agent_run_text(run_result)
             logger.debug(f"[RequirementsAnalyst] Raw LLM output: {raw_output}")
-            
-            # Try to parse JSON
+
             output_dict = json.loads(raw_output)
-            
-            # Validate with Pydantic
             validated = RequirementsOutput(**output_dict)
-            
-            # Success - update state
+
             state.task_type = validated.task_type
             state.constraints = validated.constraints
             state.preferences = validated.preferences
+            state.popularity = validated.popularity.model_dump()
             state.requirements_confidence = validated.confidence
             state.requirements_extracted = True
             
             logger.info(
                 f"[RequirementsAnalyst] ✓ Success. "
                 f"task_type={validated.task_type}, "
+                f"popularity_mode={state.popularity.get('mode')}, "
                 f"confidence={validated.confidence}"
             )
             
@@ -156,6 +177,7 @@ Rules:
     state.task_type = _SAFE_DEFAULTS["task_type"]
     state.constraints = _SAFE_DEFAULTS["constraints"]
     state.preferences = _SAFE_DEFAULTS["preferences"]
+    state.popularity = dict(_SAFE_DEFAULTS["popularity"])
     state.requirements_confidence = 0.25
     state.requirements_extracted = False  # Mark as unsuccessful extraction
     

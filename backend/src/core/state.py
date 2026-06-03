@@ -77,6 +77,11 @@ class RecommendationState(BaseModel):
         default_factory=dict,
         description="User preferences: speed vs accuracy, hardware, etc."
     )
+    popularity: dict = Field(
+        default_factory=lambda: {"mode": "none"},
+        description="Popularity-based DB routing: mode (none/popularity_only/hybrid), "
+                    "sort_by, min_downloads, min_likes",
+    )
     
     # Retrieval & Ranking
     retrieved_models: list[dict] = Field(
