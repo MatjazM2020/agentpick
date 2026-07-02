@@ -6,9 +6,9 @@
 [![Qdrant](https://img.shields.io/badge/Vector%20DB-Qdrant-dc244c)](https://qdrant.tech/)
 [![Docker](https://img.shields.io/badge/Run%20with-Docker%20Compose-2496ed?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-**AgentPick recommends Hugging Face language models from natural-language intent.** Describe what you need — task, latency, license, hardware — and a multi-agent pipeline retrieves candidates from a vector index, ranks them with transparent, deterministic scoring, and explains the results in a chat UI.
+**AgentPick recommends Hugging Face language models from natural-language intent.** Describe what you need — task, latency, license, hardware — and a **tool-using orchestrator agent** interprets your request, searches a vector index via tools, ranks candidates with grounded explanations, and presents the results in a chat UI.
 
-The design is deliberately **hybrid**: LLMs handle interpretation and conversation, Python handles ranking and logic, and Qdrant handles retrieval. Recommendations are reproducible and explainable rather than hallucinated.
+The design is **hybrid**: an LLM orchestrator drives a bounded tool loop (search, popularity lookup, finalize); deterministic Python implements each tool (embeddings, Qdrant, PostgreSQL, ranker); ranking stays constrained to model-card metadata supplied in the prompt.
 
 ---
 
@@ -18,7 +18,7 @@ The design is deliberately **hybrid**: LLMs handle interpretation and conversati
 - [Architecture](#architecture)
 - [Quickstart](#quickstart)
 - [Loading model data](#loading-model-data)
-- [Ranking model](#ranking-model)
+- [Ranking](#ranking)
 - [API](#api)
 - [Configuration](#configuration)
 - [Project structure](#project-structure)
@@ -34,12 +34,12 @@ The design is deliberately **hybrid**: LLMs handle interpretation and conversati
 
 Given a user query, AgentPick:
 
-1. **Analyzes** intent and extracts structured constraints (task type, hardware, latency, license, preferences).
-2. **Retrieves** candidate models via semantic search in **Qdrant** (the `hf_models` collection).
-3. **Scores** candidates with a transparent, deterministic ranking function — no LLM in the evaluator.
-4. **Synthesizes** natural-language explanations and supports multi-turn refinement in chat.
+1. **Interprets** intent and multi-turn follow-ups in a bounded orchestrator loop (Microsoft Agent Framework tools + `AgentSession`).
+2. **Searches** the catalog via tools — semantic retrieval in **Qdrant**, popularity queries in **PostgreSQL**, optional hybrid popularity filters.
+3. **Finalizes** recommendations with the ranker tool: hard-filter → re-rank → grounded explanations.
+4. **Returns** up to three recommendations with follow-up questions, or a clarification/redirect when appropriate.
 
-When a query is too vague, the pipeline asks targeted follow-up questions instead of guessing.
+Off-topic messages (greetings, chit-chat) get a plain-text redirect. Underspecified but in-domain requests proceed to search with a best-guess query rather than blocking.
 
 ---
 
@@ -53,12 +53,10 @@ flowchart TB
 
   subgraph app [Application]
     API["FastAPI backend · :5002<br/>OpenAI-compatible API"]
-    SUP["Supervisor<br/>(bounded orchestration)"]
-    RA["Requirements Analyst"]
-    RET["Retriever"]
-    EV["Evaluator"]
-    REF["Refinement Advisor"]
-    SYN["Synthesizer"]
+    MEM["Conversation memory<br/>(in-process)"]
+    ORCH["Orchestrator<br/>(LLM + bounded tool loop)"]
+    TOOLS["Tools: search_models · get_popular_models · finalize_recommendations"]
+    RK["Ranker LLM<br/>(inside finalize tool)"]
   end
 
   subgraph data [Data layer]
@@ -67,11 +65,13 @@ flowchart TB
   end
 
   UI -->|"/v1/chat/completions"| API
-  API --> SUP
-  SUP --> RA --> RET --> EV --> SYN
-  SUP -.->|"vague query"| REF
-  RET --> QD
-  PG -.->|"metadata load;<br/>relational ranking planned"| RET
+  API --> MEM
+  API --> ORCH
+  ORCH --> TOOLS
+  TOOLS --> QD
+  TOOLS --> PG
+  TOOLS --> RK
+  MEM --> ORCH
 ```
 
 ### Components
@@ -79,33 +79,31 @@ flowchart TB
 | Layer | Component | Technology |
 |-------|-----------|------------|
 | **Frontend** | Chat UI, auth, sessions | [Open WebUI](https://github.com/open-webui/open-webui) (Docker image built from `UI/`) |
-| **Backend** | Recommendation API, agent orchestration | FastAPI · [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (`agent-framework`) |
-| **Vectors** | README-chunk embeddings, semantic retrieval | Qdrant · `BAAI/bge-large-en-v1.5` |
+| **Backend** | Recommendation API, orchestrator | FastAPI · [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (`agent-framework`) |
+| **Vectors** | README-chunk embeddings, semantic retrieval | Qdrant · `BAAI/bge-large-en-v1.5` (1024-dim) |
 | **Metadata** | Per-model stats, tags, Qdrant `chunk_ids` | PostgreSQL 16 |
 | **Offline ETL** | Download HF cards, embed, export, load | `agentpick_data/` (Parquet → Qdrant + Postgres) |
 
-The backend exposes an **OpenAI-compatible** HTTP API, so Open WebUI (and any other OpenAI client) can use AgentPick like a custom model provider. Retrieval today runs against **Qdrant**; PostgreSQL holds the structured metadata loaded from the same Parquet pipeline and is wired into Compose for relational filtering and ranking as that path lands in the retriever.
+The backend exposes an **OpenAI-compatible** HTTP API. Retrieval uses **Qdrant** for semantic search; **PostgreSQL** provides structured popularity filtering and authoritative download/like counts in hybrid mode.
 
 ### Agent pipeline
 
-The pipeline runs sequentially with **bounded autonomy** — the supervisor allows at most two refinement loops, so there are no runaway agent cycles.
+The primary path is a **single orchestrator agent** with a **bounded tool loop** (`orchestrator_max_steps`, default 5 LLM roundtrips). The loop exits early when `finalize_recommendations` succeeds or when the model returns clarification text.
 
-| Agent | Role | Uses LLM? |
-|-------|------|-----------|
-| **Supervisor** | Runs each stage, enforces quality gates, bounds refinement (max 2 loops) | No |
-| **Requirements Analyst** | Natural language → task type, constraints, preferences (JSON) | Yes |
-| **Retriever** | Embed query, search Qdrant, deduplicate chunks by `model_id` | No |
-| **Evaluator** | Deterministic weighted scoring and ranking | No |
-| **Refinement Advisor** | Asks targeted follow-ups when intent is underspecified | Yes |
-| **Synthesizer** | Grounded natural-language recommendations and trade-offs | Yes |
+| Tool / step | Role | Uses LLM? |
+|-------------|------|-----------|
+| **Orchestrator** | Interprets intent, follow-ups, off-topic redirects; chooses tools | Yes (`Agent` + `AgentSession`) |
+| **`search_models`** | Embed query, search Qdrant, optional hybrid popularity filter | No |
+| **`get_popular_models`** | Top models from PostgreSQL by downloads/likes | No |
+| **`finalize_recommendations`** | Hard-filter → re-rank → explain top-K | Yes (ranker agent inside tool) |
 
-For backend internals (state, agent factory, config), see [`backend/ARCHITECTURE.md`](backend/ARCHITECTURE.md).
+Shared pipeline state lives in `RecommendationState` (`backend/src/core/state.py`). Recent chat turns from the in-memory store (`backend/src/conversation/`) are included in the orchestrator prompt for multi-turn context. See `docs/agent_patterns.py` for Microsoft Agent Framework tool patterns.
 
 ---
 
 ## Quickstart
 
-**Prerequisites:** Docker and Docker Compose. An [OpenAI API key](https://platform.openai.com/api-keys) is required for the LLM-backed agents (Requirements Analyst, Refinement Advisor, Synthesizer).
+**Prerequisites:** Docker and Docker Compose. An [OpenAI API key](https://platform.openai.com/api-keys) is required for the orchestrator and ranker agents (Microsoft Agent Framework).
 
 ```bash
 git clone <your-repo-url> agentpick
@@ -177,33 +175,29 @@ Full details, SLURM/HPC submission, and tuning live in [`agentpick_data/README.m
 
 ---
 
-## Ranking model
+## Ranking
 
-Ranking is the core contribution and runs **entirely in Python** — deterministic, reproducible, and fully logged. After Qdrant returns candidate chunks (deduplicated to models by averaging chunk similarity), the evaluator computes a weighted composite score:
+The orchestrator calls **`finalize_recommendations`** when the candidate pool is ready. That tool invokes the **Ranker** agent for a staged, evidence-weighted decision:
 
-```text
-final_score = w_semantic · similarity
-            + w_popularity · popularity
-            + w_recency · recency
-            + w_hardware · hardware_fit
-            + w_license · license_match
-            + w_inference · inference_profile
-            + w_benchmark · benchmark_score
-```
+1. **Hard filter** — drop candidates that violate explicit constraints (pipeline/task type, modality, language, hardware, license).
+2. **Score** — two LLM evaluations per survivor pool, then a deterministic composite:
+   - **40% task/domain match** — explicit training or specialization for the requested task (e.g. mathematics, coding, vision).
+   - **50% objective evidence** — benchmarks, evaluation results, training details, datasets, architecture, documented capabilities (tool use, function calling). Marketing language is ignored unless backed by facts.
+   - **10% community signal** — downloads/likes from PostgreSQL, log-scaled and capped so popularity cannot dominate.
+3. **Explain** — return the top 3 with reasons grounded in PostgreSQL `model_card` content, citing objective evidence when available.
 
-Default weights (sum to `1.0`, validated at startup in [`backend/src/core/config.py`](backend/src/core/config.py)):
+If dimension scoring cannot be parsed, the ranker falls back to embedding similarity plus community signal. The ranker is instructed never to invent benchmarks or capabilities not present in the supplied model metadata.
 
-| Component | Weight | Signal |
-|-----------|:------:|--------|
-| `semantic_similarity` | 0.22 | Cosine match between the query and indexed README chunks |
-| `popularity` | 0.22 | Downloads and likes (normalized, capped) |
-| `license_match` | 0.18 | Compliance with a requested permissive / commercial-friendly license |
-| `inference_profile` | 0.18 | CPU / quantization friendliness heuristics (tags, `gguf`/`onnx`, instruct/chat fit) |
-| `hardware_fit` | 0.13 | Model-size and hardware-constraint alignment |
-| `recency` | 0.04 | Time since last update on the hub |
-| `benchmark_score` | 0.03 | Benchmark signals when available |
+If the orchestrator loop ends without calling finalize but candidates exist, the pipeline **auto-finalizes** once. The orchestrator tool loop is capped by `orchestrator_max_steps` (default 5 LLM roundtrips in `AgentConfig`).
 
-Weights and thresholds are configurable per request. The supervisor also enforces quality gates: if the top candidate's semantic similarity or composite score is too low, it relaxes filters and re-retrieves (bounded to two iterations) and surfaces clarifying follow-up questions.
+Default pool and output sizes (`RankerConfig` / `RetrieverConfig` in [`backend/src/core/config.py`](backend/src/core/config.py)):
+
+| Parameter | Default | Purpose |
+|-----------|:-------:|---------|
+| `top_k_chunks` | 90 | Qdrant chunk hits before deduplication |
+| `top_k_models` | 30 | Candidate pool after deduplication |
+| `candidate_pool_size` | 30 | Models passed to the ranker |
+| `top_k` | 3 | Recommendations returned to the user |
 
 ---
 
@@ -240,13 +234,15 @@ Environment variables consumed by the backend (defaults set in `docker-compose.y
 
 | Variable | Used by | Purpose |
 |----------|---------|---------|
-| `OPENAI_API_KEY` | backend | LLM calls for the analyst, refinement advisor, and synthesizer (**required**) |
+| `OPENAI_API_KEY` | backend | LLM calls for Orchestrator and Ranker (**required**) |
 | `OPENAI_CHAT_MODEL_ID` | backend | Chat model for agents (default `gpt-5.4-nano`) |
 | `OPENAI_BASE_URL` | backend | Optional OpenAI-compatible / Azure-style endpoint |
 | `WEBUI_SECRET_KEY` | ui | Session signing key — set a strong value in production |
 | `QDRANT_URL` | backend | Qdrant endpoint (`http://qdrant:6333` in Compose) |
+| `QDRANT_COLLECTION_NAME` | backend | Vector collection (default `hf_models`) |
 | `POSTGRES_*` | backend | Metadata DB connection (`HOST`, `PORT`, `DB`, `USER`, `PASSWORD`) |
 | `LOG_LEVEL` | backend | Logging verbosity (default `INFO`) |
+| `AGENT_ACTIVITY_LOG` | backend | Tool/loop activity log file (default `backend/logs/agentpick.log`) |
 
 Example `.env` in the repository root (read by Compose):
 
@@ -277,10 +273,11 @@ agentpick/
 ├── backend/                   # FastAPI recommendation service
 │   ├── Dockerfile
 │   ├── app/                   # Routes, schemas, OpenAI adapter
-│   ├── src/agents/            # Supervisor, analyst, retriever, evaluator, …
-│   ├── src/core/              # State, config, embeddings, agent factory
+│   ├── src/agents/            # Orchestrator, retriever, ranker
+│   ├── src/conversation/      # In-memory session store + history formatting
+│   ├── src/core/              # State, config, Agent Framework factory + sessions
 │   ├── src/evaluation/        # Metrics and benchmarks
-│   └── ARCHITECTURE.md        # Backend design reference
+│   └── tests/                 # Unit and integration tests
 │
 ├── UI/                        # Open WebUI (frontend + its own backend)
 │   └── Dockerfile             # Built as the `ui` service
@@ -291,7 +288,9 @@ agentpick/
 │   ├── src/initialize_postgres.py
 │   └── src/init_postgres.sql
 │
-└── docs/                      # Design notes and patterns
+└── docs/                      # Design notes and thesis materials
+    ├── project.md
+    └── architecture.tex
 ```
 
 ---
@@ -342,6 +341,13 @@ python src/load_embeddings_to_qdrant.py
 POSTGRES_PORT=5433 python src/initialize_postgres.py
 ```
 
+### Tests
+
+```bash
+cd backend
+pytest tests/
+```
+
 ---
 
 ## Troubleshooting
@@ -372,7 +378,7 @@ docker compose exec backend curl -s http://qdrant:6333/healthz
 
 ## Further reading
 
-- [Backend architecture](backend/ARCHITECTURE.md)
+- [Architecture chapter source (LaTeX)](docs/architecture.tex)
 - [Data vectorization pipeline](agentpick_data/README.md)
 - [Project design notes](docs/project.md)
 

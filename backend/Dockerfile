@@ -12,8 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements
 COPY backend/requirements.txt .
 
-# Install Python dependencies globally (not to user directory)
-RUN pip install --no-cache-dir -r requirements.txt
+# CPU-only PyTorch (~80 MB vs ~426 MB CUDA wheel on aarch64). Install before
+# sentence-transformers so pip does not pull the default CUDA build from PyPI.
+RUN pip install --no-cache-dir --default-timeout=300 --retries 5 \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining Python dependencies globally (not to user directory)
+RUN pip install --no-cache-dir --default-timeout=300 --retries 5 -r requirements.txt
 
 
 # Stage 2: Runtime

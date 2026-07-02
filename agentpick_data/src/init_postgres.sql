@@ -20,7 +20,13 @@ CREATE TABLE IF NOT EXISTS models (
     chunk_ids BIGINT[],
 
     -- Number of semantic chunks
-    num_chunks INT
+    num_chunks INT,
+
+    -- Total parameter count from HuggingFace safetensors metadata (null if unavailable)
+    parameter_count BIGINT,
+
+    -- Full markdown model card (README.md) from HuggingFace Hub
+    model_card TEXT
 );
 
 -- Indexes for common filtering and ranking operations
@@ -35,3 +41,6 @@ ON models(likes DESC);
 
 CREATE INDEX IF NOT EXISTS idx_models_tags
 ON models USING GIN(tags);
+
+CREATE INDEX IF NOT EXISTS idx_models_parameter_count
+ON models(parameter_count);

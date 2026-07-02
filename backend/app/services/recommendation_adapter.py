@@ -6,7 +6,7 @@ This adapter allows the recommendation engine to be used as a standard OpenAI pr
 """
 
 import json
-from typing import Any, Dict, Iterator, List
+from typing import Any, Dict, Iterator, List, Optional
 from src.core.state import RecommendationState, ScoredModel
 
 
@@ -36,17 +36,24 @@ def extract_user_conversation_text(messages: List[Dict[str, Any]]) -> str:
     return "\n\n".join(parts).strip()
 
 
+def _format_model_block(index: int, model_id: str, reasons: List[str]) -> List[str]:
+    """Numbered model entry with 2-3 pick reasons."""
+    lines = [f"{index}. {model_id}:"]
+    for reason in reasons[:3]:
+        lines.append(f"- {reason}")
+    return lines
+
+
 def format_recommendations_as_text(
     recommendations: List[ScoredModel],
+    model_summaries: Dict[str, dict],
     explanations: Dict[str, str],
-    follow_up_questions: List[str],
-    needs_score_refinement: bool,
+    response_intro: Optional[str] = None,
 ) -> str:
     """
-    Convert recommendation objects into readable assistant output (plain text).
+    Short numbered list: intro line, then each model with 2-3 bullets.
 
-    Always formats up to three ranked models. Appends clarifying follow-ups and
-    a closing question to help the user pick one of the three.
+    Follow-up questions are omitted from text (Open WebUI renders clickable follow-ups).
     """
     if not recommendations:
         return (
@@ -54,72 +61,30 @@ def format_recommendations_as_text(
             "Add more detail about your task, hardware, or constraints and try again."
         )
 
-    lines: List[str] = []
-    if needs_score_refinement:
-        lines.append(
-            "Note: The best catalog matches for your wording are only moderate strength. "
-            "The top three below are still the current best fits; answering the follow-up "
-            "questions will sharpen the next ranking."
-        )
-        lines.append("")
+    default_intro = (
+        "For your task, my top recommendation is:"
+        if len(recommendations) == 1
+        else "For your task, the best options are:"
+    )
+    intro = (response_intro or default_intro).strip()
+    if not intro.endswith(":"):
+        intro = intro.rstrip(".") + ":"
 
-    lines.append("Top 3 models:")
-    lines.append("")
+    lines: List[str] = [intro, ""]
+    for index, rec in enumerate(recommendations, start=1):
+        summary = model_summaries.get(rec.model_id, {})
+        reasons = summary.get("reasons") or summary.get("pros") or []
+        if not reasons and rec.model_id in explanations:
+            reasons = [
+                line.lstrip("- ").strip()
+                for line in explanations[rec.model_id].splitlines()
+                if line.strip()
+            ]
+        lines.extend(_format_model_block(index, rec.model_id, reasons))
+        if index < len(recommendations):
+            lines.append("")
 
-    for idx, rec in enumerate(recommendations, start=1):
-        lines.append(f"{idx}. {rec.model_id}")
-        if rec.score >= 0.62:
-            lines.append("   Overall ranked fit: strong for your stated constraints.")
-        elif rec.score >= 0.45:
-            lines.append("   Overall ranked fit: moderate — compare deployment notes below.")
-        else:
-            lines.append("   Overall ranked fit: weaker match — treat as a candidate to validate.")
-        reason = explanations.get(rec.model_id)
-        if reason:
-            lines.append(f"   Summary: {reason.strip()}")
-        facts = rec.inference_facts or {}
-        if facts:
-            lines.append("   Deployment / inference notes (from catalog metadata only):")
-            for key in (
-                "parameter_count",
-                "quantized_ram",
-                "quantization",
-                "recommended_quantization",
-                "cpu_performance",
-                "runtimes",
-                "license",
-            ):
-                line = facts.get(key)
-                if line:
-                    lines.append(f"   - {line}")
-        lines.append("")
-
-    if follow_up_questions:
-        lines.append("Follow-up questions (to refine your next request):")
-        for q in follow_up_questions:
-            lines.append(f"- {q.strip()}")
-        lines.append("")
-
-    ids = [r.model_id for r in recommendations]
-    if len(ids) == 3:
-        pick = (
-            f"To pick one model among these three ({ids[0]}, {ids[1]}, {ids[2]}), "
-            "what matters most for you: inference speed/latency, license/compliance, "
-            "or fitting a specific memory / hardware budget?"
-        )
-    elif len(ids) == 2:
-        pick = (
-            f"To pick one model between {ids[0]} and {ids[1]}, "
-            "which is more important: raw quality on your task type, or smallest footprint on your hardware?"
-        )
-    else:
-        pick = (
-            f"If you refine your constraints, we can suggest alternatives to {ids[0]}. "
-            "What single constraint (latency, license, or model size) is tightest for you?"
-        )
-    lines.append(pick)
-
-    return "\n".join(lines).rstrip()
+    return "\n".join(lines).strip()
 
 
 def assistant_content_from_state(state: RecommendationState) -> str:
@@ -128,9 +93,9 @@ def assistant_content_from_state(state: RecommendationState) -> str:
         return state.refinement_assistant_text.strip()
     return format_recommendations_as_text(
         state.final_recommendations,
+        state.model_summaries,
         state.explanations,
-        state.follow_up_questions,
-        state.needs_score_refinement,
+        state.response_intro,
     )
 
 

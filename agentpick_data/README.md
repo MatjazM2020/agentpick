@@ -82,6 +82,7 @@ agentpick_data/
 │   └── processed_models.txt        # Resume tracking
 ├── scripts/
 │   ├── run_vectorize.sh            # Local vectorization run
+│   ├── load_parameter_counts.sh    # Backfill parameter_count via HF API
 │   ├── vectorize_only.sh           # SLURM: embed already-downloaded models
 │   ├── submit_vectorize.sh         # SLURM: full download + vectorize job
 │   └── start_qdrant.sh             # Start a standalone Qdrant container
@@ -89,6 +90,7 @@ agentpick_data/
     ├── load_embeddings_to_qdrant.py  # Parquet → Qdrant (vectors + payload)
     ├── initialize_postgres.py        # Wait + create schema + load Parquet → Postgres
     ├── load_parquet_to_postgres.py   # Metadata loader (schema must already exist)
+    ├── load_parameter_counts.py      # HF API → models.parameter_count backfill
     ├── init_postgres.sql             # PostgreSQL `models` table + indexes
     └── hf_vectorizer/                # Vectorization package
         ├── __main__.py
@@ -221,7 +223,31 @@ POSTGRES_PORT=5433 python src/initialize_postgres.py --parquet-path data/embeddi
 exists; otherwise prefer `initialize_postgres.py`.
 
 The `models` table stores: `model_id` (PK), `downloads`, `likes`, `pipeline_tag`,
-`library_name`, `created_at`, `last_modified`, `tags[]`, `chunk_ids[]`, `num_chunks`.
+`library_name`, `created_at`, `last_modified`, `tags[]`, `chunk_ids[]`, `num_chunks`,
+`parameter_count` (total params from HuggingFace `safetensors.total`, when available).
+
+### Backfill parameter counts
+
+After metadata is loaded, fetch parameter counts from HuggingFace for models listed
+in `data/processed_models.txt`:
+
+```bash
+# docker-compose exposes PostgreSQL on host port 5433 (container listens on 5432)
+docker compose up -d postgres
+
+POSTGRES_PORT=5433 python src/load_parameter_counts.py
+
+# Or use the helper script (defaults POSTGRES_PORT=5433)
+bash scripts/load_parameter_counts.sh
+
+# Test on a small batch first
+POSTGRES_PORT=5433 python src/load_parameter_counts.py --limit 20 --dry-run
+```
+
+Optional `HF_TOKEN` improves rate limits and gated-model access. Re-runs skip rows
+that already have `parameter_count` unless you pass `--force`. The script also
+applies `ALTER TABLE ... ADD COLUMN IF NOT EXISTS parameter_count` for existing
+databases.
 
 ## Step 4 — Query
 

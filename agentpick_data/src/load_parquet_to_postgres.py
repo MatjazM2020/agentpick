@@ -28,6 +28,7 @@ import logging
 import argparse
 from typing import Optional
 import pandas as pd
+import numpy as np
 import psycopg2
 from psycopg2.extras import execute_batch
 
@@ -88,6 +89,25 @@ def validate_chunk_ids(chunk_ids: list) -> list:
         raise
 
 
+def is_not_na(val):
+    """
+    Safely check if a value is not NA/None.
+    Handles both scalars and array-like values that pd.notna() might return as arrays.
+    """
+    if val is None:
+        return False
+    if isinstance(val, (list, tuple)):
+        return len(val) > 0
+    try:
+        result = pd.notna(val)
+        # If result is array-like, return True if any element is True
+        if isinstance(result, (list, tuple, np.ndarray)):
+            return any(result) if hasattr(result, '__iter__') else bool(result)
+        return bool(result)
+    except (TypeError, ValueError):
+        return True
+
+
 def aggregate_by_model(df: pd.DataFrame) -> list:
     """
     Group parquet by model_id and aggregate into model records.
@@ -120,21 +140,30 @@ def aggregate_by_model(df: pd.DataFrame) -> list:
 
         if model_id not in models_dict:
             # First occurrence of this model
+            # Process tags - handle both string and array-like values
+            tags_val = row.get('tags', '')
+            if isinstance(tags_val, (list, tuple)):
+                tags = [str(t).strip() for t in tags_val if str(t).strip()]
+            elif is_not_na(tags_val):
+                tags = [t.strip() for t in str(tags_val).split(',') if t.strip()]
+            else:
+                tags = []
+            
             models_dict[model_id] = {
                 'model_id': model_id,
-                'downloads': int(row.get('downloads', 0)) if pd.notna(row.get('downloads')) else None,
-                'likes': int(row.get('likes', 0)) if pd.notna(row.get('likes')) else None,
-                'pipeline_tag': str(row.get('pipeline_tag')) if pd.notna(row.get('pipeline_tag')) else None,
-                'library_name': str(row.get('library_name')) if pd.notna(row.get('library_name')) else None,
-                'created_at': pd.Timestamp(row.get('created_at')).to_pydatetime() if pd.notna(row.get('created_at')) else None,
-                'last_modified': pd.Timestamp(row.get('last_modified')).to_pydatetime() if pd.notna(row.get('last_modified')) else None,
-                'tags': [t.strip() for t in str(row.get('tags', '')).split(',') if t.strip()] if pd.notna(row.get('tags')) else [],
+                'downloads': int(row.get('downloads', 0)) if is_not_na(row.get('downloads')) else None,
+                'likes': int(row.get('likes', 0)) if is_not_na(row.get('likes')) else None,
+                'pipeline_tag': str(row.get('pipeline_tag')) if is_not_na(row.get('pipeline_tag')) else None,
+                'library_name': str(row.get('library_name')) if is_not_na(row.get('library_name')) else None,
+                'created_at': pd.Timestamp(row.get('created_at')).to_pydatetime() if is_not_na(row.get('created_at')) else None,
+                'last_modified': pd.Timestamp(row.get('last_modified')).to_pydatetime() if is_not_na(row.get('last_modified')) else None,
+                'tags': tags,
                 'chunk_ids': []
             }
 
         # Collect chunk ID from this row
-        chunk_id = row.get('chunk_id')
-        if pd.notna(chunk_id):
+        chunk_id = row.get('id')
+        if is_not_na(chunk_id):
             try:
                 models_dict[model_id]['chunk_ids'].append(int(chunk_id))
             except (ValueError, TypeError) as e:
@@ -252,7 +281,7 @@ def main():
         df = load_parquet(parquet_path)
 
         # 2. Validate required columns
-        required_cols = ['model_id', 'chunk_id']
+        required_cols = ['model_id', 'id']
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
             raise ValueError(f"Missing required columns: {missing}")

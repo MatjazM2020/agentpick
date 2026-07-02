@@ -39,3 +39,12 @@ def embed(text: str) -> List[float]:
     model = _get_embedding_model()
     embeddings = model.encode([text], convert_to_numpy=False)
     return embeddings[0].tolist()
+
+
+def warmup() -> None:
+    """Pre-load the embedding model and warm the LRU cache.
+
+    Call this at startup (in a thread pool) so the first real request does not
+    pay the model-load penalty.
+    """
+    embed("warmup")

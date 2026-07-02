@@ -19,24 +19,16 @@ class Message(BaseModel):
 
 
 class ScoredModel(BaseModel):
-    """A model with its computed score and breakdown."""
+    """A model with its computed score."""
     model_id: str
     score: float
-    score_breakdown: dict[str, float] = Field(
-        default_factory=dict,
-        description="Component scores: similarity, popularity, recency, etc."
+    semantic_score: float = Field(
+        default=0.0,
+        description="Normalized Qdrant cosine similarity [0, 1]",
     )
     metadata: dict = Field(
         default_factory=dict,
-        description="Raw model metadata from Qdrant"
-    )
-    score_explanations: dict[str, str] = Field(
-        default_factory=dict,
-        description="Qualitative phrases per axis for user-facing copy (no raw weights)."
-    )
-    inference_facts: dict[str, str] = Field(
-        default_factory=dict,
-        description="Grounded planning hints: params, quant, license, runtimes, etc."
+        description="Raw model metadata from Qdrant/PostgreSQL",
     )
 
 
@@ -82,6 +74,10 @@ class RecommendationState(BaseModel):
         description="Popularity-based DB routing: mode (none/popularity_only/hybrid), "
                     "sort_by, min_downloads, min_likes",
     )
+    intent_summary: Optional[str] = Field(
+        default=None,
+        description="LLM-synthesized retrieval text: primary intent plus all constraints",
+    )
     
     # Retrieval & Ranking
     retrieved_models: list[dict] = Field(
@@ -93,6 +89,11 @@ class RecommendationState(BaseModel):
         description="Models with computed scores, sorted descending"
     )
     
+    recommendation_top_k: int = Field(
+        default=3,
+        description="How many models to return this turn (1 for single-pick, 3 default)",
+    )
+
     # Final Output
     final_recommendations: list[ScoredModel] = Field(
         default_factory=list,
@@ -101,6 +102,14 @@ class RecommendationState(BaseModel):
     explanations: dict[str, str] = Field(
         default_factory=dict,
         description="Why each model was recommended (model_id -> explanation)"
+    )
+    response_intro: Optional[str] = Field(
+        default=None,
+        description='One-line opener, e.g. "For your task (…), the best options are:"',
+    )
+    model_summaries: dict[str, dict] = Field(
+        default_factory=dict,
+        description="Per-model summary: reasons (model_id -> dict)",
     )
     follow_up_questions: list[str] = Field(
         default_factory=list,
@@ -117,10 +126,6 @@ class RecommendationState(BaseModel):
     stopped_for_query_refinement: bool = Field(
         default=False,
         description="True when returning only clarification questions (no ranked top-3)",
-    )
-    needs_score_refinement: bool = Field(
-        default=False,
-        description="True when top match is below similarity/score thresholds; top-3 still shown",
     )
     
     # Pipeline Tracking
@@ -144,7 +149,17 @@ class RecommendationState(BaseModel):
     # Logging & Diagnostics
     agent_logs: list[str] = Field(
         default_factory=list,
-        description="Agent decision logs for observability"
+        description="Agent decision logs for observability",
+    )
+
+    # Microsoft Agent Framework session (multi-turn LLM context)
+    agent_session_id: Optional[str] = Field(
+        default=None,
+        description="AgentSession id for Requirements Analyst / Ranker",
+    )
+    agent_session_data: Optional[dict] = Field(
+        default=None,
+        description="Serialized AgentSession (session.to_dict()) for conversation continuity",
     )
     
     class Config:
@@ -163,4 +178,39 @@ class RecommendationState(BaseModel):
 
     def effective_search_query(self) -> str:
         """Text used for embedding / Qdrant search."""
-        return (self.conversation_text or "").strip() or (self.user_query or "").strip()
+        parts: list[str] = []
+        nl = self.natural_language_context_for_requirements()
+        if nl:
+            parts.append(nl)
+
+        summary = (self.intent_summary or "").strip()
+        if summary and summary.lower() not in (nl or "").lower():
+            parts.append(summary)
+
+        tt = (self.task_type or "").strip()
+        if tt and tt.lower() != "general":
+            parts.append(f"Task: {tt}")
+
+        for key in ("domain", "use_case", "language", "hardware", "license"):
+            val = self.constraints.get(key)
+            if val is not None and str(val).strip():
+                label = f"{key}: {val}"
+                blob = " ".join(parts).lower()
+                if str(val).lower() not in blob:
+                    parts.append(label)
+
+        for key in ("model_size", "speed_vs_accuracy"):
+            val = self.preferences.get(key)
+            if val is not None and str(val).strip():
+                label = f"{key}: {val}"
+                if str(val).lower() not in " ".join(parts).lower():
+                    parts.append(label)
+
+        pop_pref = self.preferences.get("popularity")
+        if pop_pref is True or str(pop_pref).lower() == "true":
+            if "popular" not in " ".join(parts).lower():
+                parts.append("popular well-known models")
+
+        if parts:
+            return " | ".join(parts)
+        return (self.user_query or "").strip()

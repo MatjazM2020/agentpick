@@ -98,7 +98,15 @@ class QdrantRetriever:
 
         # Deduplicate by model_id, averaging scores across chunks
         model_aggregates: Dict[str, Dict[str, Any]] = defaultdict(
-            lambda: {"score_sum": 0.0, "count": 0, "metadata": {}, "point_ids": []}
+            lambda: {
+                "score_sum": 0.0,
+                "count": 0,
+                "metadata": {},
+                "point_ids": [],
+                "best_score": float("-inf"),
+                "best_text_excerpt": "",
+                "section_headers": set(),
+            }
         )
         for point in search_results:
             payload = point.payload
@@ -112,6 +120,14 @@ class QdrantRetriever:
             agg["point_ids"].append(point.id)
             if not agg["metadata"]:
                 agg["metadata"] = payload
+            section = (payload.get("section_header") or "").strip()
+            if section:
+                agg["section_headers"].add(section)
+            if point.score >= agg["best_score"]:
+                text = (payload.get("text") or "").strip()
+                if text:
+                    agg["best_text_excerpt"] = text[:500]
+                agg["best_score"] = point.score
 
         logger.info(f"[QdrantRetriever.search] Deduplicated to {len(model_aggregates)} unique models")
 
@@ -132,6 +148,8 @@ class QdrantRetriever:
                 "metadata": agg["metadata"],
                 "num_chunks": agg["count"],
                 "point_ids": agg["point_ids"],
+                "matched_sections": sorted(agg["section_headers"])[:8],
+                "card_excerpt": agg["best_text_excerpt"],
             })
 
         candidates.sort(key=lambda x: x["score"], reverse=True)

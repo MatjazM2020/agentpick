@@ -4,6 +4,7 @@ FastAPI application factory.
 Creates and configures the FastAPI app with OpenAI-compatible API endpoints.
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -11,6 +12,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
+from src.core.agent_activity_log import configure_activity_log
 
 # Import route modules
 from app.routes import chat, models, health
@@ -26,16 +29,20 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    FastAPI lifecycle manager.
-    
-    Handles startup and shutdown events.
-    """
-    # Startup
+    """FastAPI lifecycle manager — startup pre-warms slow resources."""
     logger.info("Starting AgentPick Recommendation API")
     load_dotenv()
+    log_path = configure_activity_log()
+    logger.info(f"Agent activity log: {log_path}")
+
+    # Pre-warm embedding model in thread pool (avoids cold-start on first request)
+    from src.core.llm import warmup as _warmup_embeddings
+    from src.core.agent_factory import get_chat_client
+    await asyncio.to_thread(_warmup_embeddings)
+    get_chat_client()
+    logger.info("Embedding model and OpenAI client pre-warmed")
+
     yield
-    # Shutdown
     logger.info("Shutting down AgentPick Recommendation API")
 
 
