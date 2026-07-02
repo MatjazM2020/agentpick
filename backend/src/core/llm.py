@@ -5,6 +5,7 @@ This module provides embedding functions using SentenceTransformer.
 Used by the retriever to embed queries and retrieve similar models from Qdrant.
 """
 
+from functools import lru_cache
 from typing import List
 from sentence_transformers import SentenceTransformer
 
@@ -21,10 +22,14 @@ def _get_embedding_model() -> SentenceTransformer:
     return _embedding_model
 
 
+@lru_cache(maxsize=128)
 def embed(text: str) -> List[float]:
     """
     Embed a text query into a vector.
-    
+
+    Cached per text so the same query embedded across retrieval passes (initial
+    and relaxed/refined) is only computed once.
+
     Args:
         text: The text to embed
         
@@ -34,3 +39,12 @@ def embed(text: str) -> List[float]:
     model = _get_embedding_model()
     embeddings = model.encode([text], convert_to_numpy=False)
     return embeddings[0].tolist()
+
+
+def warmup() -> None:
+    """Pre-load the embedding model and warm the LRU cache.
+
+    Call this at startup (in a thread pool) so the first real request does not
+    pay the model-load penalty.
+    """
+    embed("warmup")

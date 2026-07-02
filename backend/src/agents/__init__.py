@@ -1,16 +1,14 @@
 """
-Agents package.
+Agents package — tool-using orchestrator + deterministic retrieval/ranking tools.
 
-Contains agent implementations for the recommendation system.
+Orchestrator (LLM + bounded tool loop) -> search_models | get_popular_models |
+finalize_recommendations (ranker LLM inside finalize).
 """
 
-from src.agents import evaluator, requirements_analyst, retriever, supervisor
-from src.agents import synthesizer
+from src.agents import orchestrator, ranker, retriever
 
 __all__ = [
-    "requirements_analyst",
+    "orchestrator",
     "retriever",
-    "evaluator",
-    "synthesizer",
-    "supervisor",
+    "ranker",
 ]

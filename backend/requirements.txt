@@ -12,6 +12,9 @@ agent-framework
 # Vector Database
 qdrant-client
 
+# Relational metadata database (popularity routing)
+psycopg2-binary
+
 # Text Processing & Embeddings
 sentence-transformers
 numpy

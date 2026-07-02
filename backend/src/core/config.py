@@ -1,12 +1,5 @@
 """
 Configuration for the recommendation system.
-
-Defines:
-- Scoring weights and thresholds
-- Agent iteration limits
-- API endpoints
-- Model retrieval parameters
-- System behavior tuning
 """
 
 import os
@@ -35,113 +28,63 @@ def _default_qdrant_query_using() -> Optional[str]:
 
 
 @dataclass
-class ScoringConfig:
-    """Weights and parameters for the deterministic scoring function."""
-    
-    # Scoring weights (must sum to 1.0). Recency de-emphasized; license + CPU/inference heuristics up.
-    w_semantic_similarity: float = 0.22
-    w_popularity: float = 0.22
-    w_recency: float = 0.04
-    w_hardware_fit: float = 0.13
-    w_license_match: float = 0.18
-    w_inference_profile: float = 0.18
-    w_benchmark_score: float = 0.03
-    
-    # Scoring component thresholds
-    min_similarity_score: float = 0.3
-    max_age_days: int = 730  # 2 years
-    
-    # Popularity normalization
+class RankerConfig:
+    """Configuration for the LLM ranker (staged hard-filter -> re-rank -> explain)."""
+
+    candidate_pool_size: int = 30
+    top_k: int = 3
+    max_retries: int = 2
+
+    # Deterministic composite weights (must sum to 1.0)
+    w_task_match: float = 0.40
+    w_objective_evidence: float = 0.50
+    w_community_signal: float = 0.10
+
+    # Community signal normalization (downloads/likes from PostgreSQL)
     max_downloads_cap: int = 10_000_000
     max_likes_cap: int = 10_000
-    
-    # Hardware fit scoring
-    cpu_only_penalty: float = 0.8
-    small_model_bonus: float = 1.1
-    large_model_penalty: float = 0.9
-    
-    def __post_init__(self):
-        """Validate weights sum to approximately 1.0."""
-        total = (
-            self.w_semantic_similarity +
-            self.w_popularity +
-            self.w_recency +
-            self.w_hardware_fit +
-            self.w_license_match +
-            self.w_inference_profile +
-            self.w_benchmark_score
-        )
-        if not 0.99 <= total <= 1.01:
+
+    def __post_init__(self) -> None:
+        total = self.w_task_match + self.w_objective_evidence + self.w_community_signal
+        if abs(total - 1.0) > 0.01:
             raise ValueError(
-                f"Scoring weights must sum to 1.0, got {total}"
+                f"Ranker weights must sum to 1.0, got {total:.4f} "
+                f"(task={self.w_task_match}, objective={self.w_objective_evidence}, "
+                f"community={self.w_community_signal})"
             )
 
 
 @dataclass
 class RetrieverConfig:
-    """Configuration for Qdrant retrieval."""
-    
-    # Qdrant connection (override via QDRANT_URL or QDRANT_HOST + QDRANT_PORT)
+    """Configuration for Qdrant semantic retrieval."""
+
     qdrant_url: str = field(default_factory=_default_qdrant_url)
     qdrant_collection_name: str = field(default_factory=_default_qdrant_collection_name)
     qdrant_query_using: Optional[str] = field(default_factory=_default_qdrant_query_using)
-    
-    # Retrieval parameters
-    top_k_chunks: int = 20  # Retrieve this many chunks
-    top_k_models: int = 10  # Return this many deduplicated models
-    # Post-vector gate; 0 = keep all Qdrant hits and let the Python evaluator rank (recommended).
+
+    top_k_chunks: int = 90
+    top_k_models: int = 30
     min_similarity_threshold: float = 0.0
-    # When False (default): do not AND-filter on pipeline_tag/license in Qdrant — LLM task_type
-    # rarely matches HF pipeline_tag 1:1 and yields zero hits. Ranking still uses constraints.
     apply_qdrant_structured_filter: bool = False
-    
-    # Metadata filtering
-    enabled_tags_filter: list[str] = None  # If set, only include these tags
-    excluded_tags_filter: list[str] = None
-    enabled_licenses: list[str] = None
 
 
 @dataclass
 class AgentConfig:
-    """Configuration for agent behavior and limits."""
-    
-    # Iteration limits (for bounded autonomy)
-    max_iterations: int = 3
-    max_analyst_retries: int = 2
-    max_synthesizer_retries: int = 2
-    
-    # Agent timeout (seconds)
-    agent_timeout_seconds: int = 30
-    
-    # Requirements extraction
-    require_all_constraints: bool = False  # If False, extract what's possible
-    
-    # Supervisor behavior
-    quality_threshold: float = 0.5  # Top composite score below this triggers retrieval refinement
-    auto_refine_on_low_confidence: bool = True
-    # How many ranked models to explain in the chat response (project: top-K explainable)
+    """Configuration for the orchestrator and recommendation output."""
+
     recommendation_top_k: int = 3
-    # Below this requirements confidence (or vague short query), ask follow-ups before retrieval
-    stop_for_query_refinement_below: float = 0.55
-    # Top-1 semantic_similarity (evaluator breakdown, 0–1) below this → extra follow-up questions
-    min_top_semantic_similarity: float = 0.22
-    # Top-1 composite score below this → flag weak match (follow-ups + optional retriever refine)
-    min_top_composite_score: float = 0.42
+    orchestrator_max_steps: int = 5
 
 
 @dataclass
 class APIConfig:
-    """Flask API configuration."""
-    
+    """HTTP API tuning (reserved for future use)."""
+
     host: str = "0.0.0.0"
     port: int = 5000
     debug: bool = False
-    
-    # CORS
     enable_cors: bool = True
-    cors_origins: list[str] = None  # None = allow all
-    
-    # Request/Response
+    cors_origins: list[str] | None = None
     max_query_length: int = 2000
     request_timeout_seconds: int = 60
 
@@ -149,35 +92,31 @@ class APIConfig:
 @dataclass
 class SystemConfig:
     """Overall system configuration."""
-    
-    scoring: ScoringConfig
+
+    ranker: RankerConfig
     retriever: RetrieverConfig
     agent: AgentConfig
     api: APIConfig
-    
-    # Logging
     log_level: str = "INFO"
-    log_agent_decisions: bool = True
-    
+
     @classmethod
     def default(cls) -> "SystemConfig":
-        """Return default configuration."""
         return cls(
-            scoring=ScoringConfig(),
+            ranker=RankerConfig(),
             retriever=RetrieverConfig(),
             agent=AgentConfig(),
             api=APIConfig(),
         )
-    
+
     def validate(self) -> None:
-        """Validate configuration consistency."""
-        if self.agent.max_iterations < 1:
-            raise ValueError("max_iterations must be >= 1")
+        if self.agent.orchestrator_max_steps < 1:
+            raise ValueError("orchestrator_max_steps must be >= 1")
         if self.retriever.top_k_models < 1:
             raise ValueError("top_k_models must be >= 1")
         if self.retriever.top_k_chunks < self.retriever.top_k_models:
             raise ValueError("top_k_chunks must be >= top_k_models")
+        if self.ranker.top_k < 1:
+            raise ValueError("ranker.top_k must be >= 1")
 
 
-# Global configuration instance
 config = SystemConfig.default()

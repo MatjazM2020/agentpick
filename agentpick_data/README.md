@@ -1,387 +1,344 @@
-# HuggingFace Model Vectorizer
+# AgentPick Data Pipeline
 
-A Python tool for downloading, parsing, and generating embeddings for HuggingFace model cards using semantic embeddings. This project vectorizes model metadata and README content, storing results in Parquet format or syncing to a Qdrant vector database.
+The data layer for **AgentPick**. It downloads HuggingFace model cards, generates
+semantic embeddings, and loads them into the two stores the backend queries:
 
-## Features
+- **Qdrant** — vector embeddings + chunk text for semantic retrieval.
+- **PostgreSQL** — structured model metadata for relational filtering and ranking.
 
-- **Download model metadata** from HuggingFace Hub with filtering by popularity (downloads threshold)
-- **Parse README content** using chunking with overlap for better semantic representation
-- **Generate embeddings** using state-of-the-art sentence transformers (BAAI/bge-large-en-v1.5 by default)
-- **Store embeddings** in Parquet format for local analysis
-- **Resume capability** - tracks processed models and resumes interrupted vectorization
-- **Flexible deployment**:
-  - Local execution via bash script
-  - HPC cluster submission via SLURM
-  - Docker integration with Qdrant vector database
+A portable **Parquet** file (`data/embeddings.parquet`) is the intermediate
+artifact produced by the vectorizer and consumed by both loaders.
+
+```
+HuggingFace Hub
+      │  download + parse README + embed (BAAI/bge-large-en-v1.5, 1024-dim)
+      ▼
+data/embeddings.parquet   ← one row per chunk
+      ├──────────────► Qdrant      (vectors + chunk text, collection: hf_models)
+      └──────────────► PostgreSQL  (one row per model, table: models)
+```
+
+---
+
+## Quickstart
+
+End-to-end on a local machine. Run everything from the `agentpick_data/` directory
+unless noted. The package isn't pip-installed, so `PYTHONPATH` must point at `src/`.
+
+```bash
+# 0. From the repo root, start the databases (Qdrant + PostgreSQL)
+docker compose up -d qdrant postgres
+#    Qdrant     → localhost:6333  (dashboard at http://localhost:6333/dashboard)
+#    PostgreSQL → localhost:5433  (mapped to the container's 5432)
+
+# 1. Set up the Python environment (in agentpick_data/)
+cd agentpick_data
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 2. Make the package importable for the whole session
+export PYTHONPATH="$PWD/src"
+
+# 3. Generate embeddings (writes data/embeddings.parquet).
+#    Start small with --limit while you verify the setup.
+python -m hf_vectorizer.vectorizer --data-dir ./data --batch-size 8 --limit 50
+
+# 4. Load vectors into Qdrant (collection: hf_models)
+python src/load_embeddings_to_qdrant.py
+
+# 5. Initialize the PostgreSQL schema and load metadata.
+#    POSTGRES_PORT=5433 because docker-compose maps the container's 5432 → host 5433.
+POSTGRES_PORT=5433 python src/initialize_postgres.py
+
+# 6. Verify with a semantic query against Qdrant
+python -m hf_vectorizer.query --backend qdrant search "small instruction-tuned chat model"
+```
+
+That's it — Qdrant holds the vectors and PostgreSQL holds the metadata, ready for
+the AgentPick backend.
+
+> **Tip:** Already have an `embeddings.parquet`? Skip step 3 and go straight to the
+> loaders (steps 4–5).
+
+---
+
+## Prerequisites
+
+- Python 3.8+
+- Docker (for Qdrant + PostgreSQL via `docker compose`)
+- (Optional) A HuggingFace token for higher API rate limits
+- (Optional) SLURM cluster access for large vectorization jobs
 
 ## Project Structure
 
 ```
-.
-├── README.md                    # This file
-├── requirements.txt             # Python dependencies
-├── data/                        # Data directory (created at runtime)
-│   ├── embeddings.parquet      # Generated embeddings
-│   └── processed_models.txt    # Resume tracking
+agentpick_data/
+├── README.md                       # This file
+├── requirements.txt                # Python dependencies
+├── data/                           # Runtime artifacts (gitignored)
+│   ├── embeddings.parquet          # Generated embeddings (one row per chunk)
+│   └── processed_models.txt        # Resume tracking
 ├── scripts/
-│   ├── run_vectorize.sh        # Local execution script
-│   ├── start_qdrant.sh         # Start Qdrant Docker container
-│   └── submit_vectorize.sh     # SLURM HPC job submission
-└── src/hf_vectorizer/          # Main package
-    ├── __init__.py
-    ├── __main__.py
-    ├── config.py               # Configuration and defaults
-    ├── vectorizer.py           # Main vectorization pipeline
-    ├── hf_client.py            # HuggingFace API client
-    ├── embeddings.py           # Embedding model wrapper
-    ├── parsing.py              # README parser and chunker
-    ├── storage.py              # Parquet storage manager
-    ├── query.py                # Query vector database
-    └── utils.py                # Utility functions
+│   ├── run_vectorize.sh            # Local vectorization run
+│   ├── load_parameter_counts.sh    # Backfill parameter_count via HF API
+│   ├── vectorize_only.sh           # SLURM: embed already-downloaded models
+│   ├── submit_vectorize.sh         # SLURM: full download + vectorize job
+│   └── start_qdrant.sh             # Start a standalone Qdrant container
+└── src/
+    ├── load_embeddings_to_qdrant.py  # Parquet → Qdrant (vectors + payload)
+    ├── initialize_postgres.py        # Wait + create schema + load Parquet → Postgres
+    ├── load_parquet_to_postgres.py   # Metadata loader (schema must already exist)
+    ├── load_parameter_counts.py      # HF API → models.parameter_count backfill
+    ├── init_postgres.sql             # PostgreSQL `models` table + indexes
+    └── hf_vectorizer/                # Vectorization package
+        ├── __main__.py
+        ├── config.py                 # Defaults + env-var configuration
+        ├── vectorizer.py             # Main pipeline (download → parse → embed → write)
+        ├── hf_client.py              # HuggingFace Hub client
+        ├── embeddings.py             # Sentence-transformer wrapper
+        ├── parsing.py                # README parsing + token chunking
+        ├── storage.py                # Streaming Parquet writer
+        ├── query.py                  # Query CLI (Parquet or Qdrant backend)
+        └── utils.py                  # Logging + retry helpers
 ```
-
-## Environment Setup
-
-### Prerequisites
-
-- Python 3.8 or higher
-- pip package manager
-- (Optional) Docker for Qdrant setup
-- (Optional) SLURM cluster access (for HPC submission)
-
-### 1. Clone the Repository
-
-```bash
-cd /path/to/agentpick_data
-```
-
-### 2. Create Virtual Environment
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-
-# On Windows:
-# venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-```bash
-# Upgrade pip
-pip install --upgrade pip
-
-# Install required packages
-pip install -r requirements.txt
-```
-
-**Key Dependencies:**
-- `sentence-transformers` - Semantic embedding models
-- `transformers` - HuggingFace model architecture
-- `torch` - Deep learning framework
-- `qdrant-client` - Vector database client (optional)
-- `pandas` / `pyarrow` - Data processing and Parquet format
-- `huggingface-hub` - HuggingFace API client
-
-### 4. (Optional) Setup HuggingFace Token
-
-For higher rate limits on HuggingFace API, create a `.env` file:
-
-```bash
-# Create .env file
-cat > .env << EOF
-HF_TOKEN=your_huggingface_token_here
-DATA_DIR=./data
-EOF
-```
-
-**To get your HuggingFace token:**
-1. Go to https://huggingface.co/settings/tokens
-2. Create a new token (read access is sufficient)
-3. Copy and paste into `.env`
 
 ## Configuration
 
-Edit `src/hf_vectorizer/config.py` to customize settings:
+Vectorizer defaults live in `src/hf_vectorizer/config.py`:
 
 ```python
-# Embedding model
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
-
-# Processing parameters
-DEFAULT_BATCH_SIZE = 32              # Embeddings per batch
-DEFAULT_MAX_TOKENS_PER_CHUNK = 512   # Tokens per README chunk
-DEFAULT_CHUNK_OVERLAP_TOKENS = 64    # Overlap between chunks
-
-# Filtering
-MIN_DOWNLOADS_THRESHOLD = 1000       # Only process models with >1000 downloads
-
-# Vector database (Qdrant)
-QDRANT_URL = "http://localhost:6333"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"  # 1024-dim, cosine distance
+DEFAULT_BATCH_SIZE = 8
+DEFAULT_MAX_TOKENS_PER_CHUNK = 512
+DEFAULT_CHUNK_OVERLAP_TOKENS = 64
+MIN_DOWNLOADS_THRESHOLD = 1000          # Skip models below this download count
 QDRANT_COLLECTION_NAME = "hf_models"
 ```
 
-## Running Vectorization
+Environment variables (read via `.env` for the vectorizer/Qdrant loader, or
+exported directly for the PostgreSQL scripts):
 
-### Option 1: Local Execution (Recommended for Small Runs)
+| Variable | Default | Used by |
+|---|---|---|
+| `HF_TOKEN` | _none_ | HuggingFace API (higher rate limits) |
+| `DATA_DIR` | `./data` | Vectorizer + Qdrant loader |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant loader + query |
+| `POSTGRES_HOST` | `localhost` | PostgreSQL scripts |
+| `POSTGRES_PORT` | `5432` | PostgreSQL scripts (use `5433` for docker-compose) |
+| `POSTGRES_DB` | `agentpick` | PostgreSQL scripts |
+| `POSTGRES_USER` | `agentpick` | PostgreSQL scripts |
+| `POSTGRES_PASSWORD` | `agentpick_password` | PostgreSQL scripts |
 
-This runs on your local machine using all available CPU/GPU resources.
+Optional `.env` (in `agentpick_data/`) for the vectorizer and Qdrant loader:
 
 ```bash
-# Activate virtual environment first
-source venv/bin/activate
+cat > .env << 'EOF'
+HF_TOKEN=your_huggingface_token_here
+DATA_DIR=./data
+QDRANT_URL=http://localhost:6333
+EOF
+```
 
-# Run vectorization with default settings
+Get a token at https://huggingface.co/settings/tokens (read access is enough).
+
+## Step 1 — Generate Embeddings
+
+The vectorizer fetches text-generation models (sorted by downloads, stopping below
+`MIN_DOWNLOADS_THRESHOLD`), downloads each README, chunks it with overlap, embeds the
+chunks, and streams the result to `data/embeddings.parquet`.
+
+### Local run
+
+```bash
+export PYTHONPATH="$PWD/src"
+
+# Convenience wrapper (creates data/ and logs/, uses batch size 32)
 bash scripts/run_vectorize.sh
 
-# Or run directly with custom options
+# Or call the module directly with custom options
 python -m hf_vectorizer.vectorizer \
     --data-dir ./data \
     --embedding-model "BAAI/bge-large-en-v1.5" \
-    --batch-size 32
+    --batch-size 8 \
+    --limit 100
 ```
 
-**Command-line options:**
-- `--data-dir PATH` - Directory for storing embeddings and metadata
-- `--embedding-model MODEL_ID` - HuggingFace model ID for embeddings
-- `--batch-size SIZE` - Batch size for embedding generation (default: 32)
-- `--hf-token TOKEN` - HuggingFace API token (or use `.env` file)
+**Options:** `--data-dir`, `--embedding-model`, `--batch-size`, `--limit`,
+`--hf-token` (or set `HF_TOKEN`).
 
-**Output:**
-- `data/embeddings.parquet` - Parquet file with embeddings and metadata
-- `data/processed_models.txt` - List of processed model IDs for resuming
+**Output:** `data/embeddings.parquet` and `data/processed_models.txt` (resume log).
 
-### Option 2: HPC Cluster (SLURM)
+Each Parquet row is one README chunk with these columns:
+`id`, `vector`, `model_id`, `section_header`, `section_index`, `chunk_index`,
+`num_sections`, `text`, `downloads`, `likes`, `tags`, `pipeline_tag`,
+`library_name`, `created_at`, `last_modified`.
 
-For processing large numbers of models on a compute cluster:
+### HPC run (SLURM)
 
 ```bash
-# Submit job to SLURM queue
-sbatch scripts/submit_vectorize.sh
-
-# Check job status
-squeue -u $USER
-
-# View job output (while running or after completion)
-tail -f logs/vectorize_<job_id>.log
+sbatch scripts/submit_vectorize.sh   # full download + vectorize
+sbatch scripts/vectorize_only.sh     # embed already-downloaded models
+squeue -u "$USER"                    # check status
 ```
 
-**SLURM Configuration (in `scripts/submit_vectorize.sh`):**
-- Time limit: 12 hours
-- CPUs: 8 per task
-- Memory: 32 GB
-- GPU: 1x A100 (optional, for faster embeddings)
-- Partition: `frida` (customize for your cluster)
+Adjust the `#SBATCH` directives (partition, GPU, time, paths) for your cluster.
 
-Modify the `#SBATCH` directives to match your cluster's requirements.
+## Step 2 — Load Vectors into Qdrant
 
-### Option 3: Interactive Python
-
-For debugging or running specific models:
+Start Qdrant if it isn't already running (`docker compose up -d qdrant`, or the
+standalone `bash scripts/start_qdrant.sh`), then:
 
 ```bash
-source venv/bin/activate
-python
+export PYTHONPATH="$PWD/src"
 
-from hf_vectorizer.vectorizer import HFModelVectorizer
+# Uses DATA_DIR/embeddings.parquet, QDRANT_URL, and collection "hf_models" by default
+python src/load_embeddings_to_qdrant.py
 
-vectorizer = HFModelVectorizer(
-    data_dir="./data",
-    embedding_model="BAAI/bge-large-en-v1.5",
-    batch_size=32
-)
-
-# Process a single model
-vectorizer.process_model("meta-llama/Llama-2-7b", point_id_counter=0)
+# Or pass explicit args: <parquet_path> <qdrant_url> <collection_name>
+python src/load_embeddings_to_qdrant.py data/embeddings.parquet http://localhost:6333 hf_models
 ```
 
-## Storage Options
+The collection is created automatically (cosine distance, dimension inferred from
+the data). The Parquet `id` column becomes the Qdrant point ID; every other column
+is stored in the point payload.
 
-### Parquet (Local Storage - Default)
+## Step 3 — Load Metadata into PostgreSQL
 
-Embeddings are stored in `data/embeddings.parquet` (Apache Parquet format).
-
-**Advantages:**
-- No external database needed
-- Easy to read with pandas/polars
-- Efficient columnar compression
-
-**Access embeddings:**
-```python
-import pandas as pd
-import pyarrow.parquet as pq
-
-# Read all embeddings
-df = pd.read_parquet("data/embeddings.parquet")
-print(df.columns)  # Model ID, embedding, content, metadata...
-
-# Read specific columns
-table = pq.read_table("data/embeddings.parquet", columns=["model_id", "embedding"])
-```
-
-### Qdrant Vector Database (Optional)
-
-For semantic search across embeddings, sync to a Qdrant instance:
-
-#### Step 1: Start Qdrant Docker Container
+`initialize_postgres.py` is the one-shot setup: it waits for PostgreSQL, applies the
+schema from `init_postgres.sql` (the `models` table + indexes), then aggregates the
+Parquet by `model_id` and upserts one row per model (with the chunk IDs that link
+back to Qdrant points).
 
 ```bash
-# Start Qdrant locally (requires Docker)
-bash scripts/start_qdrant.sh
+# docker-compose exposes PostgreSQL on host port 5433
+POSTGRES_PORT=5433 python src/initialize_postgres.py
 
-# Qdrant will be available at http://localhost:6333
-# Web UI: http://localhost:6333/dashboard
+# Custom Parquet path
+POSTGRES_PORT=5433 python src/initialize_postgres.py --parquet-path data/embeddings.parquet
 ```
 
-#### Step 2: Configure Qdrant URL (Optional)
+`load_parquet_to_postgres.py` is a metadata-only loader for when the schema already
+exists; otherwise prefer `initialize_postgres.py`.
 
-Default configuration connects to localhost. For remote Qdrant, update `.env`:
+The `models` table stores: `model_id` (PK), `downloads`, `likes`, `pipeline_tag`,
+`library_name`, `created_at`, `last_modified`, `tags[]`, `chunk_ids[]`, `num_chunks`,
+`parameter_count` (total params from HuggingFace `safetensors.total`, when available).
+
+### Backfill parameter counts
+
+After metadata is loaded, fetch parameter counts from HuggingFace for models listed
+in `data/processed_models.txt`:
 
 ```bash
-QDRANT_URL=http://your-qdrant-server:6333
+# docker-compose exposes PostgreSQL on host port 5433 (container listens on 5432)
+docker compose up -d postgres
+
+POSTGRES_PORT=5433 python src/load_parameter_counts.py
+
+# Or use the helper script (defaults POSTGRES_PORT=5433)
+bash scripts/load_parameter_counts.sh
+
+# Test on a small batch first
+POSTGRES_PORT=5433 python src/load_parameter_counts.py --limit 20 --dry-run
 ```
 
-#### Step 3: Run Vectorization
+Optional `HF_TOKEN` improves rate limits and gated-model access. Re-runs skip rows
+that already have `parameter_count` unless you pass `--force`. The script also
+applies `ALTER TABLE ... ADD COLUMN IF NOT EXISTS parameter_count` for existing
+databases.
 
-Vectorization automatically syncs to Qdrant if `QDRANT_URL` is configured.
+## Step 4 — Query
 
-## Resume and Checkpointing
-
-The vectorizer automatically tracks processed models in `data/processed_models.txt`:
-
-- If interrupted, subsequent runs skip already-processed models
-- No data loss - new chunks are appended to `embeddings.parquet`
-- Safe to run multiple times on the same data directory
-
-**To clear and restart:**
-```bash
-# Remove progress tracking (keeps embeddings)
-rm data/processed_models.txt
-
-# Remove all data (start fresh)
-rm -rf data/
-```
-
-## Example Workflow
-
-### Complete vectorization pipeline:
+The query CLI works against either the Parquet file or Qdrant.
 
 ```bash
-# 1. Setup environment
-source venv/bin/activate
+export PYTHONPATH="$PWD/src"
 
-# 2. (Optional) Start Qdrant if using vector search
-bash scripts/start_qdrant.sh  # Run in separate terminal
+# Qdrant backend
+python -m hf_vectorizer.query --backend qdrant stats
+python -m hf_vectorizer.query --backend qdrant search "multilingual summarization model" --limit 5
 
-# 3. Run vectorization locally
-bash scripts/run_vectorize.sh
-
-# Expected output:
-# Starting HF Model Vectorizer...
-# 
-# Downloading and parsing HF models...
-# Models processed: 100%|████████| 5000/5000 [02:45:30<00:00, 0.51 it/s]
-# 
-# Vectorization complete!
-# Embeddings saved to: data/embeddings.parquet
+# Parquet backend (no database needed; loads the file into memory)
+python -m hf_vectorizer.query --backend parquet --parquet-path data/embeddings.parquet stats
+python -m hf_vectorizer.query --backend parquet --parquet-path data/embeddings.parquet search "code generation"
 ```
 
-### Query embeddings:
+**Commands:** `stats`, `search <query>`, `tag <tag>`, `top`, `details <model_id>`,
+`export`.
+
+Inspect the Parquet directly with pandas:
 
 ```python
 import pandas as pd
 
-# Load embeddings
 df = pd.read_parquet("data/embeddings.parquet")
+print(f"Chunks: {len(df)}  |  Models: {df['model_id'].nunique()}  |  Dim: {len(df['vector'].iloc[0])}")
+```
 
-# Find embedding statistics
-print(f"Total chunks: {len(df)}")
-print(f"Unique models: {df['model_id'].nunique()}")
-print(f"Embedding dimensions: {len(df['embedding'][0])}")
+## Resume & Checkpointing
 
-# Filter by model type
-llm_models = df[df['tags'].str.contains("llama|gpt", na=False)]
-print(f"LLM models: {len(llm_models)}")
+The vectorizer tracks processed models in `data/processed_models.txt`:
+
+- Interrupted runs resume automatically, skipping already-processed models.
+- New chunks are appended; point IDs continue from the current max.
+- Both loaders use upserts, so re-running them is safe.
+
+```bash
+rm data/processed_models.txt   # re-process models (keeps existing Parquet)
+rm -rf data/                   # start completely fresh
 ```
 
 ## Troubleshooting
 
-### Issue: "No module named 'hf_vectorizer'"
-
-**Solution:** Ensure virtual environment is activated and working directory is correct:
+**`No module named 'hf_vectorizer'`** — activate the venv and export the path:
 ```bash
 source venv/bin/activate
-cd /path/to/agentpick_data
+export PYTHONPATH="$PWD/src"   # from the agentpick_data/ directory
 ```
 
-### Issue: Out of memory during embedding generation
-
-**Solution:** Reduce batch size:
+**PostgreSQL connection refused / timeout** — confirm the container is up and use the
+mapped host port:
 ```bash
-python -m hf_vectorizer.vectorizer \
-    --data-dir ./data \
-    --batch-size 8  # Smaller batch
+docker compose ps postgres
+POSTGRES_PORT=5433 python src/initialize_postgres.py
 ```
 
-### Issue: HuggingFace rate limiting
-
-**Solution:** Add API token to `.env` for higher rate limits:
+**Qdrant connection failed** — verify it's running:
 ```bash
-echo "HF_TOKEN=hf_your_token_here" >> .env
+docker compose ps qdrant       # or: docker ps | grep qdrant
+docker compose up -d qdrant
 ```
 
-### Issue: Qdrant connection failed
-
-**Solution:** Check if Qdrant is running:
+**Out of memory during embedding** — reduce the batch size:
 ```bash
-# Check if Docker container is running
-docker ps | grep qdrant
-
-# If not, start it
-bash scripts/start_qdrant.sh
-
-# Or disable Qdrant by commenting QDRANT_URL in .env
+python -m hf_vectorizer.vectorizer --batch-size 8
 ```
 
-### Issue: "CUDA out of memory" (GPU usage)
-
-**Solution:** Use CPU instead or reduce batch size:
+**`CUDA out of memory`** — force CPU or shrink the batch:
 ```bash
-# Force CPU usage
 export CUDA_VISIBLE_DEVICES=""
 python -m hf_vectorizer.vectorizer --batch-size 8
 ```
 
+**HuggingFace rate limiting** — add a token:
+```bash
+echo "HF_TOKEN=hf_your_token_here" >> .env
+```
+
 ## Performance Notes
 
-- **Embedding generation:** ~0.5 models/second on modern hardware
-- **Parquet size:** ~25-50 MB per 1,000 models (depending on README length)
-- **Memory usage:** 8-16 GB RAM for 32-batch embeddings
-- **GPU acceleration:** ~2-3x faster with CUDA-capable GPU
-
-**For 100,000 models:** ~24-48 hours on single machine, ~2-4 hours on HPC cluster with GPU
-
-## Contributing
-
-To extend this project:
-
-1. **Custom embedding models:** Modify `config.py` and `embeddings.py`
-2. **Different parsing strategies:** Edit `parsing.py` for alternative chunking
-3. **Additional storage backends:** Extend `storage.py` (e.g., PostgreSQL, Elasticsearch)
-4. **Query improvements:** Enhance `query.py` for better search
-
-## License
-
-[Add your license here]
+- **Embedding model:** `BAAI/bge-large-en-v1.5` → 1024 dimensions, cosine distance.
+- **Throughput:** ~0.5 models/sec on CPU; ~2–3× faster with a CUDA GPU.
+- **Parquet size:** ~25–50 MB per 1,000 models (depends on README length).
+- **Memory:** 8–16 GB RAM for typical batch sizes.
 
 ## References
 
 - [HuggingFace Hub](https://huggingface.co/)
 - [Sentence Transformers](https://www.sbert.net/)
-- [BAAI bge-large-en embeddings](https://huggingface.co/BAAI/bge-large-en-v1.5)
+- [BAAI/bge-large-en-v1.5](https://huggingface.co/BAAI/bge-large-en-v1.5)
 - [Qdrant Vector Database](https://qdrant.tech/)
+- [PostgreSQL](https://www.postgresql.org/)
 - [Apache Parquet](https://parquet.apache.org/)

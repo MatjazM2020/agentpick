@@ -44,7 +44,6 @@ class HFClient:
             kwargs = {
                 'filter': 'text-generation',
                 'sort': 'downloads',
-                'direction': -1,
             }
             if limit:
                 kwargs['limit'] = limit

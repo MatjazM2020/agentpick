@@ -1,34 +1,35 @@
 """
-Agent factory for creating and initializing agents.
+Agent factory — Microsoft Agent Framework (``agent-framework``).
 
-Centralizes agent instantiation with consistent configuration across the system.
+See ``docs/agent_patterns.py`` for tool and session patterns.
 """
 
 import inspect
 import os
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
-# Requirements Analyst + Synthesizer use OpenAI Chat Completions via agent-framework.
 DEFAULT_AGENT_CHAT_MODEL = "gpt-5.4-nano"
 
+_shared_client: Optional[OpenAIChatClient] = None
+_ranker_agent: Optional[Agent] = None
 
-def _get_client() -> OpenAIChatClient:
-    """
-    OpenAI Chat Completions client for agent LLM calls.
 
-    Environment (agent-framework / OpenAIChatClient):
-    - OPENAI_API_KEY: required for successful API calls (unless provided elsewhere)
-    - OPENAI_CHAT_MODEL_ID: optional; defaults to DEFAULT_AGENT_CHAT_MODEL (passed as model / model_id per SDK)
-    - OPENAI_BASE_URL: optional; OpenAI-compatible API base URL
-    """
+def get_chat_client() -> OpenAIChatClient:
+    """Return a process-wide OpenAI chat client."""
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = _build_client()
+    return _shared_client
+
+
+def _build_client() -> OpenAIChatClient:
     model_id = os.getenv("OPENAI_CHAT_MODEL_ID", DEFAULT_AGENT_CHAT_MODEL)
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL")
 
-    # PyPI-stable agent-framework uses ``model``; some releases/docs use ``model_id``.
     _params = inspect.signature(OpenAIChatClient.__init__).parameters
     kwargs: dict = {}
     if "model" in _params:
@@ -51,144 +52,43 @@ def _get_client() -> OpenAIChatClient:
         ) from e
 
 
-def _create_requirements_analyst_agent() -> Agent:
-    """
-    Create Requirements Analyst agent.
-    
-    Responsible for:
-    - Parsing natural language queries
-    - Extracting structured constraints and preferences
-    - Returning JSON with task type, constraints, preferences
-    """
-    client = _get_client()
-    
-    instructions = """You are a Requirements Analyst agent for a machine learning model recommendation system.
+def _create_ranker_agent() -> Agent:
+    client = get_chat_client()
+    instructions = """You are the Ranker agent in an ML model recommendation system.
 
-Your job: Transform user queries into structured JSON with:
-1. task_type: The ML task (e.g., summarization, qa, code_generation, translation, classification, etc.)
-2. constraints: dict with latency, memory, license, hardware constraints
-3. preferences: dict with user preferences (speed vs accuracy, model size, etc.)
+Given a pool of Hugging Face model candidates already retrieved by embedding
+similarity, you run a staged, evidence-weighted decision:
 
-Rules:
-- Return ONLY valid JSON (no markdown, no explanations)
-- Be thorough in extracting all mentioned constraints
-- If a constraint is not mentioned, omit it (don't guess)
-- Set confidence based on how clear the requirements are
-"""
-    
-    agent = Agent(
-        client=client,
-        name="RequirementsAnalyst",
-        instructions=instructions,
-    )
-    
-    return agent
+1. HARD FILTER: drop candidates that violate the user's EXPLICIT requirements
+   (pipeline/task type, modality, language, hardware, license).
+2. SCORE survivors in two separate evaluations (each returns 0.0–1.0 per model):
+   a. TASK/DOMAIN MATCH — explicit training or specialization for the requested task.
+   b. OBJECTIVE EVIDENCE — benchmarks, evaluation results, training details, datasets,
+      architecture, documented capabilities (tool use, function calling). Ignore marketing hype.
+   Community signal (downloads/likes) is computed deterministically in Python — do not score it.
+3. EXPLAIN each top pick with 2-3 readable sentences grounded in model_card content.
+   Prefer citing objective facts over marketing language.
 
-
-def _create_synthesizer_agent() -> Agent:
-    """
-    Create Synthesizer agent.
-    
-    Responsible for:
-    - Generating human-readable explanations for recommendations
-    - Converting scores and metadata into clear reasoning
-    - Suggesting follow-up questions for refinement
-    
-    CRITICAL: No hallucination - explanations must be grounded in provided data.
-    """
-    client = _get_client()
-    
-    instructions = """You are a Synthesizer agent for explaining model recommendations.
-
-Your job: Generate clear, factual explanations for why specific models are recommended.
+Composite score (computed in Python, not by you):
+  0.40 * task_match + 0.50 * objective_evidence + 0.10 * community_signal
 
 Rules:
-- Base all explanations on provided metadata and scores
-- Never invent features or capabilities
-- Explain trade-offs between models
-- Generate 2-3 follow-up clarifying questions if the user might refine
-- Return ONLY valid JSON (no markdown, no explanations)
-- Keep explanations concise (2-3 sentences per model)
-
-Grounded explanation structure:
-{
-  "recommendations": [
-    {
-      "model_id": "string",
-      "score": float,
-      "why": "explanation based on score breakdown and metadata",
-      "pros": ["list of strengths from metadata"],
-      "cons": ["list of limitations"]
-    }
-  ],
-  "follow_up_questions": ["question1", "question2"]
-}
-"""
-    
-    agent = Agent(
-        client=client,
-        name="Synthesizer",
-        instructions=instructions,
-    )
-    
-    return agent
-
-
-def _create_refinement_advisor_agent() -> Agent:
-    """Interactive clarification when the query is too broad or retrieval is weak."""
-    client = _get_client()
-    instructions = """You are a Refinement Advisor for an ML model recommendation chat.
-
-You only produce JSON. You never name specific models from Hugging Face or the web.
-You ask concise questions so the user can add task, hardware, latency, memory, license, or preference details.
-"""
-    return Agent(
-        client=client,
-        name="RefinementAdvisor",
-        instructions=instructions,
-    )
-
-
-class AgentFactory:
-    """Factory for creating and managing agents."""
-    
-    _agents: Optional[Dict[str, Agent]] = None
-    
-    @classmethod
-    def create_all(cls) -> Dict[str, Agent]:
-        """
-        Create all agents needed for the recommendation pipeline.
-        
-        Caches agents for reuse.
-        
-        Returns:
-            Dict mapping agent names to Agent objects:
-            {
-                "requirements_analyst": Agent,
-                "synthesizer": Agent
-            }
-        """
-        if cls._agents is None:
-            cls._agents = {
-                "requirements_analyst": _create_requirements_analyst_agent(),
-                "synthesizer": _create_synthesizer_agent(),
-                "refinement_advisor": _create_refinement_advisor_agent(),
-            }
-        return cls._agents
-    
-    @classmethod
-    def reset(cls) -> None:
-        """Reset cached agents (useful for testing)."""
-        cls._agents = None
+- Use ONLY metadata and model_card text in the prompt. Never invent benchmarks or capabilities.
+- Penalize unsubstantiated marketing claims; reward verifiable evidence.
+- Return ONLY valid JSON in the requested schema."""
+    return Agent(client=client, name="Ranker", instructions=instructions)
 
 
 def create_agents() -> Dict[str, Agent]:
-    """
-    Create all agents needed for the recommendation pipeline.
-    
-    Public interface to AgentFactory.
-    
-    Returns:
-        Dict mapping agent names to Agent objects
-    """
-    return AgentFactory.create_all()
+    """Return shared LLM agents used by the orchestrator tools."""
+    global _ranker_agent
+    if _ranker_agent is None:
+        _ranker_agent = _create_ranker_agent()
+    return {"ranker": _ranker_agent}
+
+
+def reset_agents() -> None:
+    """Clear cached client and agents (for tests)."""
+    global _shared_client, _ranker_agent
+    _shared_client = None
+    _ranker_agent = None

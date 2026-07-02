@@ -14,6 +14,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from src.services.recommendation_pipeline import run_recommendation
+from src.conversation import conversation_store, session_id_from_messages
+from src.conversation.openwebui_tasks import (
+    fallback_follow_ups_from_messages,
+    follow_ups_response_content,
+    is_follow_up_generation_task,
+)
 from app.schemas.openai_chat import ChatCompletionRequest, ChatCompletionResponse
 from app.services.recommendation_adapter import (
     extract_user_conversation_text,
@@ -71,10 +77,47 @@ async def chat_completions(request: ChatCompletionRequest):
         # Run recommendation pipeline
         # The pipeline is async and handles event loop properly
         conversation_text = extract_user_conversation_text(openai_messages)
+        session_id = session_id_from_messages(openai_messages)
+
+        if is_follow_up_generation_task(user_query):
+            follow_ups = conversation_store.get_follow_ups(session_id)
+            if not follow_ups:
+                follow_ups = fallback_follow_ups_from_messages(openai_messages)
+            created_timestamp = int(time.time())
+            completion_id = f"chatcmpl-{uuid.uuid4()}"
+            assistant_text = follow_ups_response_content(follow_ups)
+            logger.info(
+                f"[ChatCompletions] Follow-up task: returning {len(follow_ups)} suggestions"
+            )
+            if request.stream:
+                return StreamingResponse(
+                    iter_chat_completion_sse(
+                        assistant_text,
+                        completion_id,
+                        request.model,
+                        created_timestamp,
+                    ),
+                    media_type="text/event-stream",
+                )
+            return ChatCompletionResponse(
+                id=completion_id,
+                created=created_timestamp,
+                model=request.model,
+                choices=[
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": assistant_text},
+                        "finish_reason": "stop",
+                    }
+                ],
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            )
+
         try:
             state = await run_recommendation(
                 user_query,
                 conversation_text=conversation_text or None,
+                session_id=session_id,
             )
         except Exception as e:
             logger.error(f"Recommendation pipeline failed: {e}", exc_info=True)

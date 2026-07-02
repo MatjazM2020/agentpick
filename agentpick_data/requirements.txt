@@ -9,3 +9,6 @@ pyarrow
 tqdm
 python-dotenv
 qdrant-client
+
+# Data Processing & Persistence
+psycopg2-binary
