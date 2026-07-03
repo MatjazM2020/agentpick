@@ -1,8 +1,7 @@
 """
-LLM utilities for embeddings and text processing.
+Query embeddings via SentenceTransformer.
 
-This module provides embedding functions using SentenceTransformer.
-Used by the retriever to embed queries and retrieve similar models from Qdrant.
+Used by ``src/catalog.py`` to embed search queries for Qdrant vector search.
 """
 
 from functools import lru_cache

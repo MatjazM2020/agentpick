@@ -1,27 +1,15 @@
-# Core Web Framework
+# Web framework (OpenAI-compatible API)
 FastAPI
 uvicorn
 pydantic
-
-# Environment & Configuration
 python-dotenv
 
-# Agent Framework & LLM (OpenAI Chat Completions for agentic steps)
+# Agent (Microsoft Agent Framework over OpenAI Chat Completions)
 agent-framework
 
-# Vector Database
-qdrant-client
+# Catalog data sources
+qdrant-client        # semantic search over model-card chunks
+psycopg2-binary      # model metadata (PostgreSQL)
 
-# Relational metadata database (popularity routing)
-psycopg2-binary
-
-# Text Processing & Embeddings
+# Query embeddings for semantic search
 sentence-transformers
-numpy
-scipy
-scikit-learn
-
-# Utilities
-requests
-httpx
-typing-extensions

@@ -44,58 +44,43 @@ async def chat_completions(request: ChatCompletionRequest):
     ctx = RequestContext(request_id=request_id, query_snippet=user_text[:80])
     agent_messages = openai_io.to_agent_messages(openai_messages)
     is_task = openai_io.is_openwebui_task(user_text)
+    log_request_start(request_id, user_text, request.stream)
 
-    try:
-        if is_task:
+    # Streaming agent answer: yield chunks as the agent generates them.
+    if request.stream and not is_task:
+
+        async def _streamed_sse():
+            # Attach inside the stream body — StreamingResponse may run in a
+            # different asyncio context than the route handler.
             ctx.attach()
-            log_request_start(request_id, user_text, request.stream)
-            text = await complete_task(agent_messages)
-            log_request_end(ctx.elapsed_ms, ctx._tool_count, status="task")
-            ctx.detach()
-            if request.stream:
-                return StreamingResponse(
-                    openai_io.sse_from_text(text, completion_id, request.model, created),
-                    media_type="text/event-stream",
-                )
-            return ChatCompletionResponse(
-                **openai_io.completion_response(text, completion_id, request.model, created)
-            )
+            try:
+                async for frame in openai_io.sse_from_stream(
+                    stream_reply(agent_messages), completion_id, request.model, created
+                ):
+                    yield frame
+            finally:
+                log_request_end(ctx.elapsed_ms, ctx._tool_count)
+                ctx.detach()
 
-        logger.info("[chat] %s | query=%s", request_id, user_text[:100])
+        return StreamingResponse(_streamed_sse(), media_type="text/event-stream")
 
-        if request.stream:
-            log_request_start(request_id, user_text, request.stream)
-
-            async def _streamed_sse():
-                # Attach inside the stream body — StreamingResponse may run in a
-                # different asyncio context than the route handler.
-                ctx.attach()
-                try:
-                    async for frame in openai_io.sse_from_stream(
-                        stream_reply(agent_messages), completion_id, request.model, created
-                    ):
-                        yield frame
-                finally:
-                    log_request_end(ctx.elapsed_ms, ctx._tool_count)
-                    ctx.detach()
-
-            return StreamingResponse(_streamed_sse(), media_type="text/event-stream")
-
-        ctx.attach()
-        log_request_start(request_id, user_text, request.stream)
-        text = await complete_reply(agent_messages)
-        log_request_end(ctx.elapsed_ms, ctx._tool_count)
-        ctx.detach()
-        return ChatCompletionResponse(
-            **openai_io.completion_response(text, completion_id, request.model, created)
-        )
-
-    except HTTPException:
-        log_request_end(ctx.elapsed_ms, ctx._tool_count, status="http_error")
-        ctx.detach()
-        raise
+    # Full answer: agent reply, or plain completion for Open WebUI background tasks.
+    ctx.attach()
+    try:
+        text = await (complete_task if is_task else complete_reply)(agent_messages)
+        log_request_end(ctx.elapsed_ms, ctx._tool_count, status="task" if is_task else "ok")
     except Exception as e:
         log_request_end(ctx.elapsed_ms, ctx._tool_count, status="error")
-        ctx.detach()
         logger.error("chat/completions failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Agent error: {e}")
+    finally:
+        ctx.detach()
+
+    if request.stream:
+        return StreamingResponse(
+            openai_io.sse_from_text(text, completion_id, request.model, created),
+            media_type="text/event-stream",
+        )
+    return ChatCompletionResponse(
+        **openai_io.completion_response(text, completion_id, request.model, created)
+    )

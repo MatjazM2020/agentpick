@@ -37,6 +37,7 @@ class RequestContext:
     request_id: str
     query_snippet: str
     _tool_count: int = field(default=0, repr=False)
+    _llm_count: int = field(default=0, repr=False)
     _start: float = field(default_factory=time.monotonic, repr=False)
     _token: object = field(default=None, repr=False)
 
@@ -57,6 +58,10 @@ class RequestContext:
     def next_tool(self, name: str) -> str:
         self._tool_count += 1
         return f"tool#{self._tool_count} {name}"
+
+    def next_llm_turn(self) -> int:
+        self._llm_count += 1
+        return self._llm_count
 
     @property
     def elapsed_ms(self) -> float:

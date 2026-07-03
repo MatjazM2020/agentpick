@@ -18,7 +18,7 @@ from agent_framework import Agent, ChatContext, ChatMiddleware, FunctionInvocati
 from agent_framework.openai import OpenAIChatClient
 
 from src.core import config
-from src.core.agent_activity_log import log_llm_call
+from src.core.agent_activity_log import current_context, log_llm_call
 from src.tools import TOOLS
 
 logger = logging.getLogger(__name__)
@@ -58,13 +58,9 @@ How to answer:
 class _ActivityLoggingMiddleware(ChatMiddleware):
     """Logs each chat-client call (one per agent loop turn, including tool-result turns)."""
 
-    def __init__(self) -> None:
-        self._turn_counter: dict[int, int] = {}
-
     async def process(self, context: ChatContext, call_next: Callable) -> None:
-        task_id = id(context)
-        turn = self._turn_counter.get(task_id, 0) + 1
-        self._turn_counter[task_id] = turn
+        ctx = current_context()
+        turn = ctx.next_llm_turn() if ctx else 1
 
         # Rough token estimate from message text lengths (~4 chars per token)
         total_chars = sum(
