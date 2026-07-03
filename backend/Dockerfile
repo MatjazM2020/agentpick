@@ -43,8 +43,10 @@ ENV PYTHONUNBUFFERED=1 \
 # Copy application code
 COPY backend/ /app/
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Create non-root user and ensure the log directory exists and is writable
+RUN mkdir -p /app/logs \
+    && useradd -m -u 1000 appuser \
+    && chown -R appuser:appuser /app
 USER appuser
 
 # Health check

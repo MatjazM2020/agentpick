@@ -10,16 +10,18 @@ from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/v1", tags=["models"])
 
-# Model registry
+# Model registry — advertised to Open WebUI via GET /v1/models
 AVAILABLE_MODELS = [
     {
         "id": "agentpick-recommender",
         "object": "model",
         "created": int(time.time()),
         "owned_by": "agentpick",
+        "name": "AgentPick Recommender",
+        "description": "Hugging Face model recommendations from natural-language intent",
         "permission": [],
         "root": None,
-        "parent": None
+        "parent": None,
     }
 ]
 

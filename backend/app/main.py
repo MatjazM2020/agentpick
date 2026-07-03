@@ -29,20 +29,34 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifecycle manager — startup pre-warms slow resources."""
+    """FastAPI lifecycle manager — serve immediately; warm slow resources in background."""
     logger.info("Starting AgentPick Recommendation API")
     load_dotenv()
     log_path = configure_activity_log()
     logger.info(f"Agent activity log: {log_path}")
+    from src.core.agent_activity_log import log_activity
+    log_activity(f"=== AgentPick started | log={log_path} ===")
 
-    # Pre-warm embedding model in thread pool (avoids cold-start on first request)
-    from src.core.llm import warmup as _warmup_embeddings
-    from src.core.agent_factory import get_chat_client
-    await asyncio.to_thread(_warmup_embeddings)
-    get_chat_client()
-    logger.info("Embedding model and OpenAI client pre-warmed")
+    async def _warmup() -> None:
+        try:
+            from src.core.llm import warmup as _warmup_embeddings
+            from src.agent import get_client
+
+            await asyncio.to_thread(_warmup_embeddings)
+            get_client()
+            logger.info("Embedding model and OpenAI client pre-warmed")
+        except Exception as e:
+            logger.warning(f"Background warmup failed (first request may be slower): {e}")
+
+    warmup_task = asyncio.create_task(_warmup())
 
     yield
+
+    warmup_task.cancel()
+    try:
+        await warmup_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Shutting down AgentPick Recommendation API")
 
 
