@@ -159,12 +159,18 @@ _ABSTENTION_PHRASES = (
     "cannot satisfy",
     "can't satisfy",
     "cannot simultaneously",
+    "cannot be both",
+    "can't be both",
     "mutually exclusive",
+    "incompatible",
     "contradict",
-    "conflicting constraints",
+    "conflict",
     "impossible",
     "does not exist",
     "doesn't exist",
+    "not found",
+    "isn't found",
+    "none match",
     # catalog-grounded absence (e.g. a nonexistent model id in the request)
     "not in the catalog",
     "not in our catalog",
@@ -180,6 +186,21 @@ _ABSTENTION_PHRASES = (
     "cannot find",
     "can't find",
     "unable to find",
+    # soft grounded abstention ("I can't verify that model in the catalog")
+    "cannot verify",
+    "can't verify",
+    "unable to verify",
+    "cannot confirm",
+    "can't confirm",
+)
+
+
+# Negative-existence statements with a qualifier between "no" and "model(s)"
+# ("no instruction-tuned models in the catalog meet that threshold",
+# "no models with >= 2T (2000B) parameters available").
+_NO_MODEL_RE = re.compile(
+    r"\bno\b[\w\s,'-]{0,60}?\bmodels?\b[\w\s,'()<>=≥≤~.%-]{0,40}?"
+    r"\b(?:meets?|match\w*|satisf\w*|exists?|fits?|qualif\w*|available)\b"
 )
 
 
@@ -194,7 +215,9 @@ def detects_impossible(text: str) -> bool:
         .replace("`", "")
         .casefold()
     )
-    return any(p in lowered for p in _ABSTENTION_PHRASES)
+    return any(p in lowered for p in _ABSTENTION_PHRASES) or bool(
+        _NO_MODEL_RE.search(lowered)
+    )
 
 
 # Imperative clarification requests without a question mark

@@ -182,9 +182,11 @@ def semantic_search(query: str, limit: int = 8) -> list[dict]:
             if text:
                 a["excerpt"] = text[:_CARD_EXCERPT_CHARS]
 
+    # Rank models by their best-matching chunk: averaging chunk scores would
+    # penalize models with long cards (many retrieved, partially relevant chunks).
     ranked = sorted(
         agg.items(),
-        key=lambda kv: kv[1]["score_sum"] / max(kv[1]["count"], 1),
+        key=lambda kv: kv[1]["best_score"],
         reverse=True,
     )[:limit]
 
@@ -215,6 +217,24 @@ _SORT_SQL = {
 }
 
 
+# A tag filter matching this few models is more likely a wrong tag than a
+# genuinely rare capability; the result then carries a warning + similar tags.
+_SPARSE_TAG_THRESHOLD = 25
+
+
+def _similar_tags(tag: str) -> list[str]:
+    """Existing tags containing ``tag`` as a substring, with model counts."""
+    # Namespaced tags (license:, dataset:, region:, ...) are metadata, not
+    # capability tags, so they make poor suggestions.
+    rows = _select(
+        "SELECT t AS tag, COUNT(*) AS n FROM models, unnest(tags) AS t "
+        "WHERE t ILIKE %s AND t NOT LIKE '%%:%%' "
+        "GROUP BY t ORDER BY n DESC LIMIT 6",
+        [f"%{tag}%"],
+    )
+    return [f"{r['tag']} ({r['n']} models)" for r in rows]
+
+
 def filter_models(
     task_type: Optional[str] = None,
     tag: Optional[str] = None,
@@ -223,47 +243,86 @@ def filter_models(
     max_params_b: Optional[float] = None,
     sort_by: str = "downloads",
     limit: int = 8,
-) -> list[dict]:
+) -> dict:
     """
     Structured SQL query over the catalog for precise constraints and rankings.
 
-    Returns an empty list when nothing matches — the signal for "no model fits".
+    Returns ``{"models": [...], "total_matches": N, "warnings": [...]}`` so the
+    agent can tell "nothing/few match" apart from "the filter is too narrow":
+    warnings flag sparse tags (with similar existing tags) and models excluded
+    by a size filter only because their parameter count is unknown.
     """
     where: list[str] = []
-    params: list[Any] = [_CARD_EXCERPT_CHARS]
+    wparams: list[Any] = []
+    size_clauses: list[str] = []
+    size_params: list[Any] = []
 
     tt = (task_type or "").strip().lower()
     if tt and tt != "general":
         where.append("LOWER(pipeline_tag) = %s")
-        params.append(tt)
+        wparams.append(tt)
     if tag and tag.strip():
         where.append("%s = ANY(tags)")
-        params.append(tag.strip())
+        wparams.append(tag.strip())
     if name_contains and name_contains.strip():
         where.append("model_id ILIKE %s")
-        params.append(f"%{name_contains.strip()}%")
+        wparams.append(f"%{name_contains.strip()}%")
     if min_params_b is not None:
-        where.append("parameter_count >= %s")
-        params.append(int(float(min_params_b) * 1_000_000_000))
+        size_clauses.append("parameter_count >= %s")
+        size_params.append(int(float(min_params_b) * 1_000_000_000))
     if max_params_b is not None:
-        where.append("parameter_count <= %s")
-        params.append(int(float(max_params_b) * 1_000_000_000))
+        size_clauses.append("parameter_count <= %s")
+        size_params.append(int(float(max_params_b) * 1_000_000_000))
 
     order = _SORT_SQL.get((sort_by or "").strip().lower(), _SORT_SQL["downloads"])
     limit = max(1, min(int(limit), 25))
 
-    sql = f"SELECT {_META_COLUMNS}, LEFT(model_card, %s) AS card_excerpt FROM models"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += f" ORDER BY {order} LIMIT %s"
-    params.append(limit)
-
-    rows = _select(sql, params)
-    logger.info(
-        "[catalog] filter_models(task=%s, tag=%s, name=%s, %s-%sB, sort=%s) -> %d",
-        task_type, tag, name_contains, min_params_b, max_params_b, sort_by, len(rows),
+    all_clauses = where + size_clauses
+    where_sql = (" WHERE " + " AND ".join(all_clauses)) if all_clauses else ""
+    sql = (
+        f"SELECT {_META_COLUMNS}, LEFT(model_card, %s) AS card_excerpt FROM models"
+        f"{where_sql} ORDER BY {order} LIMIT %s"
     )
-    return [_shape(r, card_excerpt=(r.get("card_excerpt") or "").strip()) for r in rows]
+    rows = _select(sql, [_CARD_EXCERPT_CHARS] + wparams + size_params + [limit])
+
+    total = _select(
+        f"SELECT COUNT(*) AS n FROM models{where_sql}", wparams + size_params
+    )[0]["n"]
+
+    warnings: list[str] = []
+    if tag and tag.strip() and total < _SPARSE_TAG_THRESHOLD:
+        similar = _similar_tags(tag.strip())
+        msg = (
+            f"The tag filter '{tag.strip()}' matched only {total} of the whole "
+            "catalog. Tags are sparse and inconsistently applied, so this "
+            "filter may be excluding relevant models — consider name_contains "
+            "or search_models instead."
+        )
+        if similar:
+            msg += " Similar existing tags: " + ", ".join(similar) + "."
+        warnings.append(msg)
+    if size_clauses:
+        unknown_sql = " AND ".join(where + ["parameter_count IS NULL"])
+        unknown = _select(
+            f"SELECT COUNT(*) AS n FROM models WHERE {unknown_sql}", wparams
+        )[0]["n"]
+        if unknown:
+            warnings.append(
+                f"Note: {unknown} models matching the other filters have an "
+                "unknown parameter count and are not included in this "
+                "size-filtered result."
+            )
+
+    logger.info(
+        "[catalog] filter_models(task=%s, tag=%s, name=%s, %s-%sB, sort=%s) -> %d/%d",
+        task_type, tag, name_contains, min_params_b, max_params_b, sort_by,
+        len(rows), total,
+    )
+    return {
+        "models": [_shape(r, card_excerpt=(r.get("card_excerpt") or "").strip()) for r in rows],
+        "total_matches": total,
+        "warnings": warnings,
+    }
 
 
 def get_model_details(model_id: str) -> Optional[dict]:

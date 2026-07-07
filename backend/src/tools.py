@@ -67,17 +67,22 @@ async def filter_models(
     ] = None,
     tag: Annotated[
         Optional[str],
-        Field(description="A single tag that must be present, e.g. 'code' or 'conversational'."),
+        Field(description="A single tag that must be present (exact match), e.g. 'code' or "
+                          "'conversational'. Tags are sparse and inconsistent: capabilities like "
+                          "instruction tuning are usually NOT tagged — filter by name_contains "
+                          "('instruct', 'chat', '-it') instead."),
     ] = None,
     name_contains: Annotated[
         Optional[str],
         Field(description="Substring the model id must contain, e.g. 'instruct', 'coder', 'distill'."),
     ] = None,
     min_params_b: Annotated[
-        Optional[float], Field(description="Minimum parameter count in billions, e.g. 7.")
+        Optional[float], Field(description="Minimum parameter count in billions, e.g. 7. "
+                                           "Excludes models whose size is unknown (~1/3 of catalog).")
     ] = None,
     max_params_b: Annotated[
-        Optional[float], Field(description="Maximum parameter count in billions, e.g. 15.")
+        Optional[float], Field(description="Maximum parameter count in billions, e.g. 15. "
+                                           "Excludes models whose size is unknown (~1/3 of catalog).")
     ] = None,
     sort_by: Annotated[
         str,
@@ -88,16 +93,20 @@ async def filter_models(
     """Structured catalog query for precise constraints, popularity, and size rankings.
 
     Use for concrete requirements ("under 4B parameters", "coding model", "most
-    downloaded", "smallest instruction-tuned model"). An empty result means no
-    catalog model satisfies the constraints.
+    downloaded", "smallest instruction-tuned model"). The result includes
+    'total_matches' (how many catalog models satisfy the filters overall) and
+    'warnings' — heed both: a tiny total usually means the filter is too
+    narrow, not that the catalog lacks such models. An empty result with no
+    warnings means no catalog model satisfies the constraints.
     """
     label = _label("filter_models")
     t0 = time.monotonic()
     try:
-        models = await asyncio.to_thread(
+        result = await asyncio.to_thread(
             catalog.filter_models,
             task_type, tag, name_contains, min_params_b, max_params_b, sort_by, limit,
         )
+        models = result["models"]
         elapsed = (time.monotonic() - t0) * 1000
         log_tool_call(
             label,
@@ -108,7 +117,12 @@ async def filter_models(
             len(models),
             elapsed,
         )
-        return _json({"models": models, "count": len(models)})
+        return _json({
+            "models": models,
+            "count": len(models),
+            "total_matches": result["total_matches"],
+            "warnings": result["warnings"],
+        })
     except Exception as e:
         elapsed = (time.monotonic() - t0) * 1000
         log_tool_call(label, {"task_type": task_type}, None, elapsed, error=str(e))
