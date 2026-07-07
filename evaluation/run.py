@@ -36,11 +36,13 @@ import logging
 import random
 import statistics
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from evaluation import metrics
 from evaluation.dataset import CATEGORIES, EvalQuestion, load_dataset
+from src.core.agent_activity_log import dialogue_turn
 
 logger = logging.getLogger(__name__)
 
@@ -126,13 +128,18 @@ def aggregate(results: list[dict]) -> dict:
     return summary
 
 
-async def run_dialogue(run_fn, turns: list[str]) -> list[str]:
+async def run_dialogue(
+    run_fn, turns: list[str], question_id: str = ""
+) -> list[str]:
     """Feed the user turns one by one, passing the growing dialogue each time."""
     messages: list[dict] = []
     answers: list[str] = []
-    for turn in turns:
+    dialogue_id = uuid.uuid4().hex[:8]
+    total = len(turns)
+    for user_turn, turn in enumerate(turns, start=1):
         messages.append({"role": "user", "content": turn})
-        answer = await run_fn(messages)
+        with dialogue_turn(dialogue_id, user_turn, total, question_id):
+            answer = await run_fn(messages)
         answers.append(answer)
         messages.append({"role": "assistant", "content": answer})
     return answers
@@ -160,7 +167,7 @@ async def evaluate_system(system: str, questions: list[EvalQuestion], k: int) ->
     for q in questions:
         t0 = time.monotonic()
         try:
-            answers = await run_dialogue(run_fn, list(q.turns))
+            answers = await run_dialogue(run_fn, list(q.turns), q.id)
             error = None
         except Exception as e:  # score a failed call as an empty answer
             logger.error("[eval] %s / %s failed: %s", system, q.id, e)

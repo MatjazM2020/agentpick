@@ -282,7 +282,7 @@ def detects_impossible(text: str) -> bool:
 # Imperative clarification requests without a question mark
 # ("If you tell me your target ..., I can narrow it down").
 _CLARIFICATION_REQUEST_RE = re.compile(
-    r"\b(?:if you (?:can )?tell me|tell me (?:your|what|which|more)|let me know)\b",
+    r"\b(?:if you (?:can )?tell me|(?:please )?tell me(?:\s+\w+){0,3}\s+(?:your|what|which|more|me|about)|let me know|reply with)\b",
     re.IGNORECASE,
 )
 

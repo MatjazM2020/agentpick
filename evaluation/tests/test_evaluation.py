@@ -196,6 +196,15 @@ def test_asks_clarification_imperative_without_question_mark():
     )
 
 
+def test_asks_clarification_please_tell_me_without_question_mark():
+    # Agent N2 turn 1 (184045 run): numbered setup questions without "?".
+    assert metrics.asks_clarification(
+        "Please tell me one thing about your setup:\n"
+        "1) What GPU/RAM do you have (e.g., 8GB CPU only, 12GB GPU, 24GB GPU), and\n"
+        "2) Your main use-case (chat/Q&A, coding, summarization, or translation)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Explanation-quality text metrics (loads the BERTScore model — slow once)
 # ---------------------------------------------------------------------------
@@ -301,3 +310,26 @@ def test_compare_detects_consistent_difference():
     assert row["diff"] == 0.7
     assert row["p_value"] < 0.05
     assert row["diff_ci95"][0] > 0  # CI excludes zero
+
+
+def test_run_dialogue_passes_growing_history():
+    import asyncio
+
+    from evaluation.run import run_dialogue
+
+    seen: list[list[dict]] = []
+
+    async def record_messages(messages: list[dict]) -> str:
+        seen.append([dict(m) for m in messages])
+        return f"answer-{len(seen)}"
+
+    answers = asyncio.run(
+        run_dialogue(record_messages, ["turn one", "turn two"], question_id="N2")
+    )
+    assert answers == ["answer-1", "answer-2"]
+    assert seen[0] == [{"role": "user", "content": "turn one"}]
+    assert seen[1] == [
+        {"role": "user", "content": "turn one"},
+        {"role": "assistant", "content": "answer-1"},
+        {"role": "user", "content": "turn two"},
+    ]

@@ -12,9 +12,10 @@ import contextvars
 import logging
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 _LOGGER = logging.getLogger("agentpick.activity")
 _configured = False
@@ -23,6 +24,19 @@ _configured = False
 _CTX: contextvars.ContextVar[Optional["RequestContext"]] = contextvars.ContextVar(
     "_agentpick_ctx", default=None
 )
+_DIALOGUE_CTX: contextvars.ContextVar[Optional["DialogueContext"]] = contextvars.ContextVar(
+    "_agentpick_dialogue_ctx", default=None
+)
+
+
+@dataclass(frozen=True)
+class DialogueContext:
+    """Optional multi-turn dialogue metadata for eval/API requests."""
+
+    dialogue_id: str
+    user_turn: int
+    user_turns_total: int
+    question_id: str = ""
 
 
 @dataclass
@@ -31,6 +45,8 @@ class RequestContext:
 
     request_id: str
     tool_count: int = 0
+    llm_loop_turn: int = 0
+    history_messages: int = 0
     _start: float = field(default_factory=time.monotonic, repr=False)
     _token: object = field(default=None, repr=False)
 
@@ -52,6 +68,10 @@ class RequestContext:
         self.tool_count += 1
         return f"tool#{self.tool_count} {name}"
 
+    def next_llm_loop_turn(self) -> int:
+        self.llm_loop_turn += 1
+        return self.llm_loop_turn
+
     @property
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self._start) * 1000
@@ -59,6 +79,31 @@ class RequestContext:
 
 def current_context() -> Optional[RequestContext]:
     return _CTX.get(None)
+
+
+def current_dialogue() -> Optional[DialogueContext]:
+    return _DIALOGUE_CTX.get(None)
+
+
+@contextmanager
+def dialogue_turn(
+    dialogue_id: str,
+    user_turn: int,
+    user_turns_total: int,
+    question_id: str = "",
+) -> Iterator[None]:
+    """Attach multi-turn dialogue metadata for the next agent request(s)."""
+    ctx = DialogueContext(
+        dialogue_id=dialogue_id,
+        user_turn=user_turn,
+        user_turns_total=user_turns_total,
+        question_id=question_id,
+    )
+    token = _DIALOGUE_CTX.set(ctx)
+    try:
+        yield
+    finally:
+        _DIALOGUE_CTX.reset(token)
 
 
 def _log_file() -> Path:
@@ -103,10 +148,31 @@ def log_activity(message: str) -> None:
     _LOGGER.info("%s%s", prefix, message)
 
 
-def log_request_start(request_id: str, query: str, streaming: bool) -> None:
-    log_activity(
-        f"REQUEST START | id={request_id} | stream={streaming} | query={query[:120]!r}"
-    )
+def log_request_start(
+    request_id: str,
+    query: str,
+    streaming: bool,
+    *,
+    history_messages: int = 0,
+) -> None:
+    ctx = current_context()
+    if ctx is not None:
+        ctx.history_messages = history_messages
+    parts = [
+        "REQUEST START",
+        f"id={request_id}",
+        f"stream={streaming}",
+    ]
+    dialogue = current_dialogue()
+    if dialogue is not None:
+        parts.append(f"dialogue={dialogue.dialogue_id}")
+        parts.append(f"user_turn={dialogue.user_turn}/{dialogue.user_turns_total}")
+        if dialogue.question_id:
+            parts.append(f"q={dialogue.question_id}")
+    if history_messages:
+        parts.append(f"history_messages={history_messages}")
+    parts.append(f"query={query[:120]!r}")
+    log_activity(" | ".join(parts))
 
 
 def log_request_end(elapsed_ms: float, tool_count: int, status: str = "ok") -> None:
@@ -131,3 +197,13 @@ def log_tool_call(
         count_str = f"results={result_count}" if result_count is not None else ""
         parts = [label, args_str, count_str, f"{elapsed_ms:.0f}ms"]
         log_activity(" | ".join(p for p in parts if p))
+
+
+def log_llm_loop_turn(turn: int, input_tokens: Optional[int] = None, elapsed_ms: Optional[float] = None) -> None:
+    """Log one LLM call inside the agent's tool-calling loop."""
+    parts = [f"LLM CALL | agent_loop_turn={turn}"]
+    if input_tokens:
+        parts.append(f"~{input_tokens} input tokens")
+    if elapsed_ms is not None:
+        parts.append(f"{elapsed_ms:.0f}ms")
+    log_activity(" | ".join(parts))

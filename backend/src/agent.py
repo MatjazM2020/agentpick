@@ -10,17 +10,19 @@ writes a specialized answer.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from contextlib import contextmanager
-from typing import AsyncIterator, Iterator, Optional
+from typing import AsyncIterator, Callable, Iterator, Optional
 
-from agent_framework import Agent, FunctionInvocationConfiguration
+from agent_framework import Agent, ChatContext, ChatMiddleware, FunctionInvocationConfiguration
 from agent_framework.openai import OpenAIChatClient
 
 from src.core import config
 from src.core.agent_activity_log import (
     RequestContext,
     current_context,
+    log_llm_loop_turn,
     log_request_end,
     log_request_start,
 )
@@ -48,8 +50,6 @@ card). Combine and repeat them until you can answer confidently:
 Catalog facts to respect:
 - Tags are sparse and inconsistent. Instruction tuning shows up as 'instruct', 'chat',
   or '-it' in the model id, not as a tag.
-- Heed per-result 'note' fields: they flag quantized/repackaged re-uploads and
-  unusable test artifacts.
 
 Judgment:
 - Match specialization to the task: domain tasks (coding, medicine, reasoning,
@@ -74,6 +74,27 @@ How to answer:
 - Never dump full model cards; summarize the relevant parts."""
 
 
+class _ActivityLoggingMiddleware(ChatMiddleware):
+    """Logs each chat-client call (one per agent loop turn, including tool-result turns)."""
+
+    async def process(self, context: ChatContext, call_next: Callable) -> None:
+        ctx = current_context()
+        turn = ctx.next_llm_loop_turn() if ctx else 1
+
+        total_chars = sum(
+            len(getattr(m, "text", "") or "")
+            for m in (context.messages or [])
+        )
+        est_tokens = total_chars // 4 or None
+
+        t0 = time.monotonic()
+        await call_next()
+        log_llm_loop_turn(turn, est_tokens, (time.monotonic() - t0) * 1000)
+
+
+_middleware = _ActivityLoggingMiddleware()
+
+
 # ---------------------------------------------------------------------------
 # Client and agent (process-wide singletons)
 # ---------------------------------------------------------------------------
@@ -93,6 +114,7 @@ def get_client() -> OpenAIChatClient:
         "function_invocation_configuration": FunctionInvocationConfiguration(
             max_iterations=config.MAX_TOOL_ITERATIONS
         ),
+        "middleware": [_middleware],
     }
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
@@ -135,19 +157,53 @@ def _plain() -> Agent:
 # Request runners
 # ---------------------------------------------------------------------------
 
+def _message_role(message) -> str:
+    role = getattr(message, "role", None)
+    if role:
+        return str(role)
+    if isinstance(message, dict):
+        return str(message.get("role") or "")
+    return ""
+
+
+def _message_text(message) -> str:
+    text = getattr(message, "text", None)
+    if isinstance(text, str):
+        return text.strip()
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content.strip()
+    return ""
+
+
 def _last_text(messages) -> str:
-    """Best-effort text of the latest message, for the request log line."""
+    """Text of the latest user message, for the request log line."""
     if isinstance(messages, str):
-        return messages
+        return messages.strip()
     try:
         items = list(messages)
     except TypeError:
         return ""
     for m in reversed(items):
-        text = getattr(m, "text", "") or (m.get("content") if isinstance(m, dict) else "")
-        if isinstance(text, str) and text.strip():
-            return text.strip()
+        if _message_role(m) == "user":
+            text = _message_text(m)
+            if text:
+                return text
+    for m in reversed(items):
+        text = _message_text(m)
+        if text:
+            return text
     return ""
+
+
+def _history_message_count(messages) -> int:
+    if isinstance(messages, str):
+        return 1 if messages.strip() else 0
+    try:
+        return sum(1 for m in messages if _message_text(m))
+    except TypeError:
+        return 0
 
 
 @contextmanager
@@ -160,7 +216,12 @@ def request_scope(messages, streaming: bool = False) -> Iterator[None]:
         yield
         return
     ctx = RequestContext(request_id=uuid.uuid4().hex[:8])
-    log_request_start(ctx.request_id, _last_text(messages), streaming)
+    log_request_start(
+        ctx.request_id,
+        _last_text(messages),
+        streaming,
+        history_messages=_history_message_count(messages),
+    )
     ctx.attach()
     status = "ok"
     try:
