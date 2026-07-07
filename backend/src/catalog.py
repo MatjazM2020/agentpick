@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from collections import defaultdict
 from typing import Any, Optional
@@ -90,14 +91,26 @@ def _select(sql: str, params: list) -> list[dict]:
 
 def _shape(row: dict, *, card_excerpt: Optional[str] = None) -> dict:
     """Normalize a DB row into a compact, LLM-friendly dict."""
+    model_id = row.get("model_id")
     out = {
-        "model_id": row.get("model_id"),
+        "model_id": model_id,
         "pipeline_tag": row.get("pipeline_tag"),
         "parameter_count": row.get("parameter_count"),
         "downloads": row.get("downloads") or 0,
         "likes": row.get("likes") or 0,
+        "last_modified": str(row.get("last_modified") or "")[:10],
         "tags": list(row.get("tags") or [])[:12],
     }
+    # Flag catalog noise per row (markers defined below) so the agent doesn't
+    # have to recognize these ids itself.
+    if model_id:
+        if _TEST_ARTIFACT_RE.search(model_id):
+            out["note"] = "randomly-initialized test artifact — not a usable model"
+        elif _is_quantized_reupload(model_id):
+            out["note"] = (
+                "quantized/repackaged re-upload; prefer the original checkpoint "
+                "unless this format was requested"
+            )
     if card_excerpt is not None:
         out["card_excerpt"] = card_excerpt
     return {k: v for k, v in out.items() if v not in (None, [], "")}
@@ -144,6 +157,37 @@ def _qdrant():
 # Public catalog operations (used by tools)
 # ---------------------------------------------------------------------------
 
+# Quantized/format re-uploads (GGUF, AWQ, ...) and mirrors share (nearly)
+# identical model cards, so raw vector search can fill every slot with copies
+# of one checkpoint. Semantic search therefore collapses candidates into
+# "families" — ids compared with format markers stripped — and returns one
+# representative per family, preferring the original checkpoint.
+_QUANT_TOKENS = frozenset({
+    "gguf", "awq", "gptq", "mlx", "exl2", "bnb", "nf4", "fp8", "fp4",
+    "int4", "int8", "w4a16", "w8a8", "4bit", "8bit", "quantized", "onnx",
+    "autoround", "unsloth",  # repackager whose name appears inside repo ids
+})
+# Randomly-initialized test artifacts: never a valid recommendation, so they
+# are excluded from search and filter results (get_model_details still returns
+# them by exact id, flagged). Same pattern syntax for Python and PostgreSQL.
+_TEST_ARTIFACT_PATTERN = r"tiny-random|internal-testing"
+_TEST_ARTIFACT_RE = re.compile(_TEST_ARTIFACT_PATTERN, re.IGNORECASE)
+_ID_TOKEN_RE = re.compile(r"[-_./]+")
+# Hugging Face renamed the "Meta-Llama-3*" repos to "Llama-3*"; both ids still
+# appear in the catalog, so normalize the prefix when comparing families.
+_META_LLAMA_PREFIX_RE = re.compile(r"^meta-llama-")
+
+
+def _is_quantized_reupload(model_id: str) -> bool:
+    return any(t in _QUANT_TOKENS for t in _ID_TOKEN_RE.split(model_id.lower()))
+
+
+def _family_key(model_id: str) -> str:
+    """Repo name with separators unified and format markers removed."""
+    repo = model_id.split("/", 1)[-1].lower()
+    tokens = [t for t in _ID_TOKEN_RE.split(repo) if t and t not in _QUANT_TOKENS]
+    return _META_LLAMA_PREFIX_RE.sub("llama-", "-".join(tokens))
+
 
 def semantic_search(query: str, limit: int = 8) -> list[dict]:
     """
@@ -171,7 +215,7 @@ def semantic_search(query: str, limit: int = 8) -> list[dict]:
     for p in points:
         payload = p.payload or {}
         mid = payload.get("model_id")
-        if not mid:
+        if not mid or _TEST_ARTIFACT_RE.search(mid):
             continue
         a = agg[mid]
         a["score_sum"] += p.score
@@ -188,23 +232,37 @@ def semantic_search(query: str, limit: int = 8) -> list[dict]:
         agg.items(),
         key=lambda kv: kv[1]["best_score"],
         reverse=True,
-    )[:limit]
+    )
 
-    ids = [mid for mid, _ in ranked]
     try:
-        meta = _meta_for_ids(ids)
+        meta = _meta_for_ids([mid for mid, _ in ranked])
     except CatalogUnavailable as e:
         logger.warning("[catalog] metadata enrich skipped: %s", e)
         meta = {}
 
-    results: list[dict] = []
+    def _preference(mid: str) -> tuple:
+        """Lower sorts first: originals over quantized, then more downloads."""
+        return (
+            _is_quantized_reupload(mid),
+            -((meta.get(mid) or {}).get("downloads") or 0),
+        )
+
+    # One representative per family; a family keeps the rank of its
+    # best-scoring member (dict insertion order), whoever ends up representing it.
+    families: dict[str, tuple[str, dict]] = {}
     for mid, a in ranked:
-        item = meta.get(mid, {"model_id": mid})
+        key = _family_key(mid)
+        cur = families.get(key)
+        if cur is None or _preference(mid) < _preference(cur[0]):
+            families[key] = (mid, a)
+
+    results: list[dict] = []
+    for mid, a in list(families.values())[:limit]:
+        item = meta.get(mid, {"model_id": mid})  # _shape notes flag re-uploads
         excerpt = a["excerpt"] or item.get("card_excerpt")
         if excerpt:
             item = {**item, "card_excerpt": excerpt}
         results.append(item)
-    logger.info("[catalog] semantic_search '%s' -> %d models", query[:60], len(results))
     return results
 
 
@@ -252,8 +310,8 @@ def filter_models(
     warnings flag sparse tags (with similar existing tags) and models excluded
     by a size filter only because their parameter count is unknown.
     """
-    where: list[str] = []
-    wparams: list[Any] = []
+    where: list[str] = ["model_id !~* %s"]  # drop randomly-initialized test artifacts
+    wparams: list[Any] = [_TEST_ARTIFACT_PATTERN]
     size_clauses: list[str] = []
     size_params: list[Any] = []
 
@@ -312,12 +370,19 @@ def filter_models(
                 "unknown parameter count and are not included in this "
                 "size-filtered result."
             )
+    if (
+        (sort_by or "").strip().lower() == "smallest"
+        and not (tt and tt != "general")
+        and not (tag and tag.strip())
+        and not (name_contains and name_contains.strip())
+        and min_params_b is None
+    ):
+        warnings.append(
+            "The smallest catalog entries are mostly toy/research miniatures, "
+            "not deployable assistants. To find the smallest usable model for "
+            "a task, add task_type, tag, or name_contains (e.g. 'instruct')."
+        )
 
-    logger.info(
-        "[catalog] filter_models(task=%s, tag=%s, name=%s, %s-%sB, sort=%s) -> %d/%d",
-        task_type, tag, name_contains, min_params_b, max_params_b, sort_by,
-        len(rows), total,
-    )
     return {
         "models": [_shape(r, card_excerpt=(r.get("card_excerpt") or "").strip()) for r in rows],
         "total_matches": total,
@@ -328,15 +393,17 @@ def filter_models(
 def get_model_details(model_id: str) -> Optional[dict]:
     """Full metadata + truncated model card (README) for one model, or None."""
     sql = (
-        f"SELECT {_META_COLUMNS}, library_name, LEFT(model_card, %s) AS model_card "
+        f"SELECT {_META_COLUMNS}, LEFT(model_card, %s) AS model_card "
         "FROM models WHERE model_id = %s"
     )
     rows = _select(sql, [_CARD_FULL_CHARS, model_id])
     if not rows:
         return None
     row = rows[0]
-    detail = _shape(row)
-    detail["library_name"] = row.get("library_name")
-    detail["last_modified"] = str(row.get("last_modified") or "") or None
-    detail["model_card"] = (row.get("model_card") or "").strip() or None
-    return {k: v for k, v in detail.items() if v not in (None, "")}
+    detail = _shape(row)  # drops empty values itself
+    if row.get("library_name"):
+        detail["library_name"] = row["library_name"]
+    card = (row.get("model_card") or "").strip()
+    if card:
+        detail["model_card"] = card
+    return detail

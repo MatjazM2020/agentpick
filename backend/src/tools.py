@@ -3,8 +3,7 @@ Agent tools — the actions the recommendation agent can autonomously call.
 
 Each tool is a thin async wrapper over ``src/catalog.py`` that returns JSON the
 LLM can reason over. The framework's function-calling loop decides which tools
-to invoke, in what order, and how to combine their results (see
-docs/agent_patterns.py, Pattern 2).
+to invoke, in what order, and how to combine their results.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Annotated, Optional
+from typing import Annotated, Callable, Optional
 
 from agent_framework import tool
 from pydantic import Field
@@ -28,10 +27,24 @@ def _json(payload) -> str:
     return json.dumps(payload, default=str, ensure_ascii=False)
 
 
-def _label(name: str) -> str:
-    """Get a per-request tool label like 'tool#2 search_models', or just the name."""
+async def _run_tool(name: str, log_args: dict, body: Callable[[], tuple[dict, int]]) -> str:
+    """Run one tool body in a worker thread, log the call + timing, return JSON.
+
+    ``body`` is a no-arg blocking callable (catalog I/O) returning
+    ``(payload, result_count)``. Exceptions become an ``{"error": ...}``
+    payload so the LLM sees the failure and can adjust its approach.
+    """
     ctx = current_context()
-    return ctx.next_tool(name) if ctx else name
+    label = ctx.next_tool(name) if ctx else name
+    t0 = time.monotonic()
+    try:
+        payload, count = await asyncio.to_thread(body)
+    except Exception as e:
+        log_tool_call(label, log_args, None, (time.monotonic() - t0) * 1000, error=str(e))
+        logger.error("%s failed: %s", name, e)
+        return _json({"error": str(e)})
+    log_tool_call(label, log_args, count, (time.monotonic() - t0) * 1000)
+    return _json(payload)
 
 
 @tool(approval_mode="never_require")
@@ -43,19 +56,15 @@ async def search_models(
     ],
     limit: Annotated[int, Field(description="Max models to return (1-15).", ge=1, le=15)] = 8,
 ) -> str:
-    """Semantic search over Hugging Face model cards. Best for fuzzy or task-based intent."""
-    label = _label("search_models")
-    t0 = time.monotonic()
-    try:
-        models = await asyncio.to_thread(catalog.semantic_search, query, limit)
-        elapsed = (time.monotonic() - t0) * 1000
-        log_tool_call(label, {"query": query, "limit": limit}, len(models), elapsed)
-        return _json({"models": models, "count": len(models)})
-    except Exception as e:
-        elapsed = (time.monotonic() - t0) * 1000
-        log_tool_call(label, {"query": query, "limit": limit}, None, elapsed, error=str(e))
-        logger.error("search_models failed: %s", e)
-        return _json({"error": str(e), "models": [], "count": 0})
+    """Semantic search over Hugging Face model cards. Best for fuzzy or task-based intent.
+
+    Re-uploads of the same checkpoint are de-duplicated.
+    """
+    def body():
+        models = catalog.semantic_search(query, limit)
+        return {"models": models, "count": len(models)}, len(models)
+
+    return await _run_tool("search_models", {"query": query, "limit": limit}, body)
 
 
 @tool(approval_mode="never_require")
@@ -99,35 +108,26 @@ async def filter_models(
     narrow, not that the catalog lacks such models. An empty result with no
     warnings means no catalog model satisfies the constraints.
     """
-    label = _label("filter_models")
-    t0 = time.monotonic()
-    try:
-        result = await asyncio.to_thread(
-            catalog.filter_models,
-            task_type, tag, name_contains, min_params_b, max_params_b, sort_by, limit,
+    def body():
+        result = catalog.filter_models(
+            task_type, tag, name_contains, min_params_b, max_params_b, sort_by, limit
         )
-        models = result["models"]
-        elapsed = (time.monotonic() - t0) * 1000
-        log_tool_call(
-            label,
-            {
-                "task_type": task_type, "tag": tag, "name": name_contains,
-                "min_b": min_params_b, "max_b": max_params_b, "sort_by": sort_by,
-            },
-            len(models),
-            elapsed,
-        )
-        return _json({
-            "models": models,
-            "count": len(models),
+        payload = {
+            "models": result["models"],
+            "count": len(result["models"]),
             "total_matches": result["total_matches"],
             "warnings": result["warnings"],
-        })
-    except Exception as e:
-        elapsed = (time.monotonic() - t0) * 1000
-        log_tool_call(label, {"task_type": task_type}, None, elapsed, error=str(e))
-        logger.error("filter_models failed: %s", e)
-        return _json({"error": str(e), "models": [], "count": 0})
+        }
+        return payload, len(result["models"])
+
+    return await _run_tool(
+        "filter_models",
+        {
+            "task_type": task_type, "tag": tag, "name": name_contains,
+            "min_b": min_params_b, "max_b": max_params_b, "sort_by": sort_by,
+        },
+        body,
+    )
 
 
 @tool(approval_mode="never_require")
@@ -137,21 +137,13 @@ async def get_model_details(
     ],
 ) -> str:
     """Full metadata and model card (README) for one model. Use to compare or verify a candidate."""
-    label = _label("get_model_details")
-    t0 = time.monotonic()
-    try:
-        detail = await asyncio.to_thread(catalog.get_model_details, model_id)
-        elapsed = (time.monotonic() - t0) * 1000
+    def body():
+        detail = catalog.get_model_details(model_id)
         if detail is None:
-            log_tool_call(label, {"model_id": model_id}, 0, elapsed)
-            return _json({"error": f"'{model_id}' not found in catalog"})
-        log_tool_call(label, {"model_id": model_id}, 1, elapsed)
-        return _json(detail)
-    except Exception as e:
-        elapsed = (time.monotonic() - t0) * 1000
-        log_tool_call(label, {"model_id": model_id}, None, elapsed, error=str(e))
-        logger.error("get_model_details failed: %s", e)
-        return _json({"error": str(e)})
+            return {"error": f"'{model_id}' not found in catalog"}, 0
+        return detail, 1
+
+    return await _run_tool("get_model_details", {"model_id": model_id}, body)
 
 
 TOOLS = [search_models, filter_models, get_model_details]

@@ -13,13 +13,14 @@ Usage (from the repository root, with Qdrant/Postgres up and OPENAI_API_KEY set)
 Scoring per category:
 
 - deterministic / ranking — precision@k, recall@k, MRR, nDCG@k against the
-  gold list (k=3 by default).
+  gold list (k=3 by default), plus explanation quality as ROUGE-L / BLEU /
+  BERTScore against the gold justification.
 - ambiguous  — does the answer ask a clarifying question, and does it mention
   at least one of the acceptable models.
 - impossible — does the answer abstain (state that no model fits / is not in
   the catalog).
 - multi_turn — does the first answer ask a clarifying question, plus the
-  ranking metrics on the final answer.
+  ranking and explanation metrics on the final answer.
 - off_topic  — does the answer redirect without recommending any model.
 
 Every raw answer is stored in the results file so answers can additionally be
@@ -59,6 +60,8 @@ def score_answer(question: EvalQuestion, answers: list[str], k: int) -> dict:
         scores[f"recall@{k}"] = metrics.recall_at_k(predicted, gold, k)
         scores["mrr"] = metrics.mrr(predicted, gold)
         scores[f"ndcg@{k}"] = metrics.ndcg_at_k(predicted, gold, k)
+        if question.justification:
+            scores.update(metrics.text_scores(final, question.justification))
         if question.category == "multi_turn":
             scores["asks_clarification_turn1"] = float(
                 metrics.asks_clarification(answers[0] if answers else "")
@@ -143,6 +146,16 @@ async def evaluate_system(system: str, questions: list[EvalQuestion], k: int) ->
     from src.core import config  # importable via the bootstrap in evaluation/__init__.py
 
     run_fn = SYSTEMS[system]
+    # Load the text-metric scorers up front so a missing dependency or model
+    # download fails/happens before any API calls are made and answer latency
+    # is not distorted by scoring.
+    metrics.text_scores("warmup", "warmup")
+    if system == "agent":
+        # Pre-load the query embedder (as the API server does at startup) so
+        # the first search_models call isn't charged its ~20s load time.
+        from src.core.llm import warmup
+
+        await asyncio.to_thread(warmup)
     results = []
     for q in questions:
         t0 = time.monotonic()
@@ -196,7 +209,10 @@ def print_summary(report: dict) -> None:
 
 def rescore_report(path: Path, k: int) -> dict:
     """Recompute scores and summary for an existing results file from its
-    stored raw answers (no API calls)."""
+    stored raw answers (no API calls). Gold models come from the stored
+    results (self-consistent with the old run); justifications, which are not
+    stored, come from the current dataset."""
+    justifications = {q.id: q.justification for q in load_dataset()}
     report = json.loads(path.read_text(encoding="utf-8"))
     for result in report["results"]:
         answers = result.get("turn_answers") or [result.get("answer", "")]
@@ -205,6 +221,7 @@ def rescore_report(path: Path, k: int) -> dict:
             category=result["category"],
             turns=(result["question"],),
             expected_models=tuple(result["expected_models"]),
+            justification=justifications.get(result["id"], ""),
         )
         result["scores"] = score_answer(question, answers, k)
     report["k"] = k

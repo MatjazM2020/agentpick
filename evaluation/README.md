@@ -36,14 +36,20 @@ org prefix) are also credited, so systems are not penalized for id
 formatting.
 
 - **deterministic / ranking:** precision@3, recall@3, MRR, nDCG@3
-  (graded relevance from the gold order, so rank errors are penalized).
+  (graded relevance from the gold order, so rank errors are penalized), plus
+  explanation quality as ROUGE-L, BLEU, and BERTScore-F1 (rescaled with the
+  English baseline) of the answer against the question's gold `justification`.
 - **ambiguous:** clarification rate (answer asks a question) and expected-model
   mention rate.
 - **impossible:** abstention rate (states no model fits / is not in the catalog).
-- **multi_turn:** turn-1 clarification rate plus the ranking metrics on the
-  final answer.
+- **multi_turn:** turn-1 clarification rate plus the ranking and explanation
+  metrics on the final answer.
 - **off_topic:** redirect rate (answer recommends no models).
 - **all:** wall-clock latency per answer (whole dialogue for multi-turn).
+
+The justification is a reference explanation, not a full reference answer, so
+the text metrics are a comparative proxy for explanation quality between
+systems rather than absolute scores.
 
 Per-category summaries report the mean of each metric with a
 percentile-bootstrap 95% confidence interval (when n ≥ 2). The abstention and
@@ -53,8 +59,10 @@ graded by a human (e.g. explanation quality).
 
 ## Running
 
-Requires the data stores (Qdrant + Postgres, populated) and `OPENAI_API_KEY`
-for the LLM-based systems:
+Requires the data stores (Qdrant + Postgres, populated), `OPENAI_API_KEY`
+for the LLM-based systems, and the evaluation extras
+(`backend/.venv/bin/pip install -r evaluation/requirements.txt`; BERTScore
+downloads its scoring model on first use).
 
 Run from the repository root with the backend virtualenv (the module puts
 `backend/` on `sys.path` itself):

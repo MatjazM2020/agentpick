@@ -19,7 +19,7 @@ from typing import Awaitable, Callable, Optional
 
 from agent_framework import Agent, Message
 
-from src.agent import complete_reply, get_client
+from src.agent import complete_reply, get_client, request_scope
 
 LLM_ONLY_INSTRUCTIONS = """You are an expert assistant that helps users choose the right \
 open-source language model from the Hugging Face hub. You have NO catalog or search access; \
@@ -62,7 +62,9 @@ async def run_agent(messages: list[dict]) -> str:
 
 async def run_llm_only(messages: list[dict]) -> str:
     """Baseline: the same LLM without catalog tools."""
-    result = await _llm_only().run(_to_agent_messages(messages))
+    agent_messages = _to_agent_messages(messages)
+    with request_scope(agent_messages):
+        result = await _llm_only().run(agent_messages)
     return (result.text or "").strip()
 
 

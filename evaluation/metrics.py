@@ -1,12 +1,14 @@
 """Ranking metrics and answer parsing.
 
 Standard information-retrieval metrics (precision@k, recall@k, MRR, nDCG@k)
-over ranked model-id lists, plus the heuristics that turn a free-text agent
-answer into a ranked prediction: model-id extraction, abstention detection,
-and clarifying-question detection.
+over ranked model-id lists, text-similarity metrics (ROUGE-L, BLEU,
+BERTScore) of the answer against the gold justification, plus the heuristics
+that turn a free-text agent answer into a ranked prediction: model-id
+extraction, abstention detection, and clarifying-question detection.
 
 All matching of model ids is case-insensitive; nDCG uses graded relevance
 derived from the gold ranking (best gold model gets the highest grade).
+The text metrics need the extras in ``evaluation/requirements.txt``.
 """
 
 from __future__ import annotations
@@ -44,8 +46,15 @@ _SEPARATOR_RE = re.compile(r"[-_.]")
 _INNER_CAMEL_RE = re.compile(r"[a-z][A-Z]")
 
 
+# Some catalog models are reachable under more than one id after a Hugging Face
+# repo rename; canonicalize known aliases so an equivalent id isn't scored as a
+# miss. The "Meta-Llama-3(.1)-*" repos were renamed to "Llama-3(.1)-*".
+_META_LLAMA_ALIAS_RE = re.compile(r"^meta-llama/meta-llama-")
+
+
 def _norm(model_id: str) -> str:
-    return model_id.strip().casefold()
+    key = model_id.strip().casefold()
+    return _META_LLAMA_ALIAS_RE.sub("meta-llama/llama-", key)
 
 
 def _plausible_repo(repo: str) -> bool:
@@ -148,6 +157,51 @@ def ndcg_at_k(predicted: Sequence[str], gold: Sequence[str], k: int) -> float:
     return dcg / idcg if idcg > 0 else 0.0
 
 
+# ---------------------------------------------------------------------------
+# Explanation quality — text similarity to the gold justification
+# ---------------------------------------------------------------------------
+
+_rouge = None
+_bert_scorer = None
+
+
+def text_scores(answer: str, reference: str) -> dict:
+    """ROUGE-L, BLEU, and BERTScore-F1 of an answer against a reference
+    explanation (the dataset's gold ``justification``).
+
+    Scores are normalized: ROUGE-L F-measure and BLEU in [0, 1]; BERTScore F1
+    rescaled with the English baseline (unrelated texts score near 0, and can
+    dip slightly below). Scorers are loaded once and reused.
+    """
+    global _rouge, _bert_scorer
+    try:
+        import sacrebleu
+        from bert_score import BERTScorer
+        from rouge_score import rouge_scorer
+    except ImportError as e:
+        raise ImportError(
+            "Text metrics need the evaluation extras: "
+            "pip install -r evaluation/requirements.txt"
+        ) from e
+
+    if not (answer or "").strip() or not (reference or "").strip():
+        return {"rougeL": 0.0, "bleu": 0.0, "bertscore_f1": 0.0}
+
+    if _rouge is None:
+        _rouge = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
+    if _bert_scorer is None:
+        _bert_scorer = BERTScorer(lang="en", rescale_with_baseline=True)
+
+    rouge_l = _rouge.score(reference, answer)["rougeL"].fmeasure
+    bleu = sacrebleu.sentence_bleu(answer, [reference]).score / 100.0
+    _, _, f1 = _bert_scorer.score([answer], [reference])
+    return {
+        "rougeL": round(rouge_l, 4),
+        "bleu": round(bleu, 4),
+        "bertscore_f1": round(float(f1[0]), 4),
+    }
+
+
 _ABSTENTION_PHRASES = (
     "no model",
     "no catalog model",
@@ -161,6 +215,9 @@ _ABSTENTION_PHRASES = (
     "cannot simultaneously",
     "cannot be both",
     "can't be both",
+    "cannot both",
+    "can't both",
+    "internally inconsistent",
     "mutually exclusive",
     "incompatible",
     "contradict",
@@ -174,6 +231,8 @@ _ABSTENTION_PHRASES = (
     # catalog-grounded absence (e.g. a nonexistent model id in the request)
     "not in the catalog",
     "not in our catalog",
+    "not present in",
+    "not listed in",
     # empty catalog scans ("a scan ... returns nothing", "none meet the threshold")
     "returns nothing",
     "found nothing",

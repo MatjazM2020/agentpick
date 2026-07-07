@@ -16,8 +16,9 @@ def qdrant_url() -> str:
 QDRANT_COLLECTION = (os.getenv("QDRANT_COLLECTION_NAME") or "hf_models").strip() or "hf_models"
 QDRANT_QUERY_USING = (os.getenv("QDRANT_QUERY_USING") or "").strip() or None
 
-# Semantic search: how many chunks to pull before de-duplicating to models.
-QDRANT_TOP_K_CHUNKS = int(os.getenv("QDRANT_TOP_K_CHUNKS", "60"))
+# Semantic search: how many chunks to pull before de-duplicating to model
+# families (re-uploads of one checkpoint can dominate the raw chunk ranking).
+QDRANT_TOP_K_CHUNKS = int(os.getenv("QDRANT_TOP_K_CHUNKS", "120"))
 
 # LLM used for the recommendation agent.
 CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-5.4-nano")

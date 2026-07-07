@@ -4,24 +4,27 @@ The AgentPick recommendation agent.
 A single conversational agent (Microsoft Agent Framework) with catalog tools.
 The framework's function-calling loop is the agentic core: the model decides
 when to search, filter, or read a model card, iterates on the results, and then
-writes a specialized answer. See docs/agent_patterns.py (Patterns 1, 2, 5).
+writes a specialized answer.
 """
 
 from __future__ import annotations
 
-import logging
 import os
-import time
-from typing import AsyncIterator, Callable, Optional
+import uuid
+from contextlib import contextmanager
+from typing import AsyncIterator, Iterator, Optional
 
-from agent_framework import Agent, ChatContext, ChatMiddleware, FunctionInvocationConfiguration
+from agent_framework import Agent, FunctionInvocationConfiguration
 from agent_framework.openai import OpenAIChatClient
 
 from src.core import config
-from src.core.agent_activity_log import current_context, log_llm_call
+from src.core.agent_activity_log import (
+    RequestContext,
+    current_context,
+    log_request_end,
+    log_request_start,
+)
 from src.tools import TOOLS
-
-logger = logging.getLogger(__name__)
 
 INSTRUCTIONS = """You are AgentPick, an expert assistant that helps users choose the right \
 open-source language model from the Hugging Face catalog.
@@ -45,15 +48,15 @@ card). Combine and repeat them until you can answer confidently:
 Catalog facts to respect:
 - Tags are sparse and inconsistent. Instruction tuning shows up as 'instruct', 'chat',
   or '-it' in the model id, not as a tag.
-- Ids marked FP8, AWQ, GPTQ, GGUF, MLX, or bnb/4-bit are quantized re-uploads —
-  recommend the original checkpoint instead unless the user asks for that format.
-- Some entries are randomly-initialized test artifacts (ids like 'tiny-random' or
-  'internal-testing'); never present them as usable models.
+- Heed per-result 'note' fields: they flag quantized/repackaged re-uploads and
+  unusable test artifacts.
 
 Judgment:
 - Match specialization to the task: domain tasks (coding, medicine, reasoning,
   translation, ...) call for domain specialists; general tasks (chat, writing, Q&A)
-  call for general instruct models — not the other way around.
+  call for general instruct models — not the other way around. For "best/maximum
+  quality" requests, run a specialization search_models pass first — never answer
+  a "best X" query with the largest generic model when specialists for X exist.
 - Downloads and likes measure popularity, not quality. Weigh what the user actually
   optimizes for (quality, size, speed, recency) instead of defaulting to the most
   popular or an outdated generation. Quality scales with size: rule of thumb, FP16
@@ -69,35 +72,6 @@ How to answer:
   not name any model — say briefly that you only help with picking models from the
   catalog.
 - Never dump full model cards; summarize the relevant parts."""
-
-
-# ---------------------------------------------------------------------------
-# Logging middleware — records every LLM call the framework makes
-# ---------------------------------------------------------------------------
-
-class _ActivityLoggingMiddleware(ChatMiddleware):
-    """Logs each chat-client call (one per agent loop turn, including tool-result turns)."""
-
-    async def process(self, context: ChatContext, call_next: Callable) -> None:
-        ctx = current_context()
-        turn = ctx.next_llm_turn() if ctx else 1
-
-        # Rough token estimate from message text lengths (~4 chars per token)
-        total_chars = sum(
-            len(getattr(m, "text", "") or "")
-            for m in (context.messages or [])
-        )
-        est_tokens = total_chars // 4 or None
-
-        t0 = time.monotonic()
-        await call_next()
-        elapsed_ms = (time.monotonic() - t0) * 1000
-
-        log_llm_call(turn, est_tokens)
-        logger.debug("[agent] LLM turn=%d, est_input_tokens=%s, %.0fms", turn, est_tokens, elapsed_ms)
-
-
-_middleware = _ActivityLoggingMiddleware()
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +93,6 @@ def get_client() -> OpenAIChatClient:
         "function_invocation_configuration": FunctionInvocationConfiguration(
             max_iterations=config.MAX_TOOL_ITERATIONS
         ),
-        "middleware": [_middleware],
     }
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
@@ -162,20 +135,61 @@ def _plain() -> Agent:
 # Request runners
 # ---------------------------------------------------------------------------
 
+def _last_text(messages) -> str:
+    """Best-effort text of the latest message, for the request log line."""
+    if isinstance(messages, str):
+        return messages
+    try:
+        items = list(messages)
+    except TypeError:
+        return ""
+    for m in reversed(items):
+        text = getattr(m, "text", "") or (m.get("content") if isinstance(m, dict) else "")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return ""
+
+
+@contextmanager
+def request_scope(messages, streaming: bool = False) -> Iterator[None]:
+    """Attach a RequestContext around one request (unless the caller already
+    attached one) so the activity log shows REQUEST START/END boundaries and
+    numbered tool calls for every entry point — API routes and the evaluation
+    harness alike."""
+    if current_context() is not None:
+        yield
+        return
+    ctx = RequestContext(request_id=uuid.uuid4().hex[:8])
+    log_request_start(ctx.request_id, _last_text(messages), streaming)
+    ctx.attach()
+    status = "ok"
+    try:
+        yield
+    except BaseException:
+        status = "error"
+        raise
+    finally:
+        log_request_end(ctx.elapsed_ms, ctx.tool_count, status=status)
+        ctx.detach()
+
+
 async def stream_reply(messages) -> AsyncIterator[str]:
     """Yield text chunks of the agent's answer as they are generated."""
-    async for update in get_agent().run(messages, stream=True):
-        if update.text:
-            yield update.text
+    with request_scope(messages, streaming=True):
+        async for update in get_agent().run(messages, stream=True):
+            if update.text:
+                yield update.text
 
 
 async def complete_reply(messages) -> str:
     """Full agent answer (non-streaming)."""
-    result = await get_agent().run(messages)
+    with request_scope(messages):
+        result = await get_agent().run(messages)
     return (result.text or "").strip()
 
 
 async def complete_task(messages) -> str:
     """Answer an Open WebUI background task with a plain (tool-less) completion."""
-    result = await _plain().run(messages)
+    with request_scope(messages):
+        result = await _plain().run(messages)
     return (result.text or "").strip()

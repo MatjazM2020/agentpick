@@ -197,6 +197,29 @@ def test_asks_clarification_imperative_without_question_mark():
 
 
 # ---------------------------------------------------------------------------
+# Explanation-quality text metrics (loads the BERTScore model — slow once)
+# ---------------------------------------------------------------------------
+
+def test_text_scores_identity_beats_unrelated():
+    reference = (
+        "The Qwen2.5 series is selected for its superior multilingual "
+        "capabilities in smaller parameter sizes."
+    )
+    identical = metrics.text_scores(reference, reference)
+    unrelated = metrics.text_scores("Photosynthesis converts sunlight.", reference)
+    assert identical["rougeL"] == 1.0
+    assert identical["bleu"] > 0.9
+    for key in ("rougeL", "bleu", "bertscore_f1"):
+        assert identical[key] > unrelated[key]
+
+
+def test_text_scores_empty_answer_is_zero():
+    assert metrics.text_scores("", "reference text") == {
+        "rougeL": 0.0, "bleu": 0.0, "bertscore_f1": 0.0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 

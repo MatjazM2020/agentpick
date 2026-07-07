@@ -1,12 +1,9 @@
 """
-Activity log — structured log for every agent request and tool call.
+Activity log — one line per agent request and tool call.
 
-Default file path:
-  - Docker:  /app/logs/agentpick.log  (set explicitly via AGENT_ACTIVITY_LOG in compose)
-  - Local:   backend/logs/agentpick.log
-
-Each line is appended and flushed immediately so bind-mounted volumes update on the host
-without waiting for process exit or handler buffers.
+Lines go to a file (``AGENT_ACTIVITY_LOG`` env override, ``/app/logs`` in
+Docker, ``backend/logs`` locally) and are mirrored to stdout through the
+root logging configuration.
 """
 
 from __future__ import annotations
@@ -14,15 +11,13 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
-import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 _LOGGER = logging.getLogger("agentpick.activity")
-_FILE_LOCK = threading.Lock()
-_LOG_PATH: Optional[Path] = None
+_configured = False
 
 # Per-request context — safe for concurrent asyncio tasks.
 _CTX: contextvars.ContextVar[Optional["RequestContext"]] = contextvars.ContextVar(
@@ -32,12 +27,10 @@ _CTX: contextvars.ContextVar[Optional["RequestContext"]] = contextvars.ContextVa
 
 @dataclass
 class RequestContext:
-    """Lightweight per-request state shared by all log calls within one turn."""
+    """Per-request state: id prefix for log lines, tool counter, elapsed time."""
 
     request_id: str
-    query_snippet: str
-    _tool_count: int = field(default=0, repr=False)
-    _llm_count: int = field(default=0, repr=False)
+    tool_count: int = 0
     _start: float = field(default_factory=time.monotonic, repr=False)
     _token: object = field(default=None, repr=False)
 
@@ -56,12 +49,8 @@ class RequestContext:
                 self._token = None
 
     def next_tool(self, name: str) -> str:
-        self._tool_count += 1
-        return f"tool#{self._tool_count} {name}"
-
-    def next_llm_turn(self) -> int:
-        self._llm_count += 1
-        return self._llm_count
+        self.tool_count += 1
+        return f"tool#{self.tool_count} {name}"
 
     @property
     def elapsed_ms(self) -> float:
@@ -72,11 +61,7 @@ def current_context() -> Optional[RequestContext]:
     return _CTX.get(None)
 
 
-# ---------------------------------------------------------------------------
-# Path resolution
-# ---------------------------------------------------------------------------
-
-def _default_log_path() -> Path:
+def _log_file() -> Path:
     """Resolve log file path: env override → Docker mount → local backend/logs."""
     raw = (os.getenv("AGENT_ACTIVITY_LOG") or "").strip()
     if raw:
@@ -88,75 +73,34 @@ def _default_log_path() -> Path:
     return Path(__file__).resolve().parents[2] / "logs" / "agentpick.log"
 
 
-def log_path() -> Path:
-    global _LOG_PATH
-    if _LOG_PATH is None:
-        _LOG_PATH = _default_log_path()
-    return _LOG_PATH
-
-
-# ---------------------------------------------------------------------------
-# File write (append + flush — reliable on Docker bind mounts)
-# ---------------------------------------------------------------------------
-
-def _format_line(message: str) -> str:
-    ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    return f"{ts} | {message}\n"
-
-
-def _append_to_file(line: str) -> None:
-    """Append one line and flush immediately. Never raises."""
-    path = log_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with _FILE_LOCK:
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write(line)
-                fh.flush()
-                os.fsync(fh.fileno())
-    except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "activity log write failed (%s): %s", path, exc
-        )
-
-
 def configure_activity_log() -> Path:
-    """
-    Ensure log directory exists and return the resolved log file path.
-
-    File writes go through ``_append_to_file`` (append + fsync). The logger
-    mirrors to stdout only via propagation — no FileHandler, no duplicate lines.
-    """
-    path = log_path()
+    """Attach the file handler (once) and return the resolved log file path."""
+    global _configured
+    path = _log_file()
+    if _configured:
+        return path
+    _configured = True
     _LOGGER.setLevel(logging.INFO)
-    _LOGGER.propagate = True
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(path, encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s | %(message)s", "%Y-%m-%d %H:%M:%S")
+        )
+        _LOGGER.addHandler(handler)
     except Exception as exc:
         logging.getLogger(__name__).warning(
-            "Could not create activity log directory %s: %s", path.parent, exc
+            "activity log file unavailable (%s): %s", path, exc
         )
     return path
 
 
-# ---------------------------------------------------------------------------
-# Public log helpers
-# ---------------------------------------------------------------------------
-
-def _prefix() -> str:
-    ctx = current_context()
-    return f"[{ctx.request_id}] " if ctx else ""
-
-
 def log_activity(message: str) -> None:
-    """Write one structured line to file (flushed) and stdout. Never raises."""
-    full = f"{_prefix()}{message}"
-    try:
-        configure_activity_log()
-        _append_to_file(_format_line(full))
-        _LOGGER.info("%s", full)
-    except Exception:
-        pass
+    """Write one line, prefixed with the current request id when inside a request."""
+    configure_activity_log()
+    ctx = current_context()
+    prefix = f"[{ctx.request_id}] " if ctx else ""
+    _LOGGER.info("%s%s", prefix, message)
 
 
 def log_request_start(request_id: str, query: str, streaming: bool) -> None:
@@ -187,8 +131,3 @@ def log_tool_call(
         count_str = f"results={result_count}" if result_count is not None else ""
         parts = [label, args_str, count_str, f"{elapsed_ms:.0f}ms"]
         log_activity(" | ".join(p for p in parts if p))
-
-
-def log_llm_call(turn: int, input_tokens: Optional[int] = None) -> None:
-    tok_str = f" | ~{input_tokens} input tokens" if input_tokens else ""
-    log_activity(f"LLM CALL      | loop_turn={turn}{tok_str}")
