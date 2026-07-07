@@ -16,6 +16,8 @@ HuggingFace Hub
 data/embeddings.parquet   ← one row per chunk
       ├──────────────► Qdrant      (vectors + chunk text, collection: hf_models)
       └──────────────► PostgreSQL  (one row per model, table: models)
+                            ▲
+HuggingFace Hub ────────────┘  enrichment: full model card + parameter count
 ```
 
 ---
@@ -48,9 +50,11 @@ python -m hf_vectorizer.vectorizer --data-dir ./data --batch-size 8 --limit 50
 # 4. Load vectors into Qdrant (collection: hf_models)
 python src/load_embeddings_to_qdrant.py
 
-# 5. Initialize the PostgreSQL schema and load metadata.
+# 5. Initialize the PostgreSQL schema, load metadata, and enrich each model
+#    with its full model card + parameter count from HuggingFace.
 #    POSTGRES_PORT=5433 because docker-compose maps the container's 5432 → host 5433.
 POSTGRES_PORT=5433 python src/initialize_postgres.py
+#    (add --skip-enrich to skip the HuggingFace enrichment pass)
 
 # 6. Verify with a semantic query against Qdrant
 python -m hf_vectorizer.query --backend qdrant search "small instruction-tuned chat model"
@@ -82,15 +86,13 @@ agentpick_data/
 │   └── processed_models.txt        # Resume tracking
 ├── scripts/
 │   ├── run_vectorize.sh            # Local vectorization run
-│   ├── load_parameter_counts.sh    # Backfill parameter_count via HF API
 │   ├── vectorize_only.sh           # SLURM: embed already-downloaded models
 │   ├── submit_vectorize.sh         # SLURM: full download + vectorize job
 │   └── start_qdrant.sh             # Start a standalone Qdrant container
 └── src/
     ├── load_embeddings_to_qdrant.py  # Parquet → Qdrant (vectors + payload)
-    ├── initialize_postgres.py        # Wait + create schema + load Parquet → Postgres
-    ├── load_parquet_to_postgres.py   # Metadata loader (schema must already exist)
-    ├── load_parameter_counts.py      # HF API → models.parameter_count backfill
+    ├── initialize_postgres.py        # Wait + schema + load Parquet → Postgres + enrich
+    ├── enrich_models.py              # HF → models.model_card + parameter_count
     ├── init_postgres.sql             # PostgreSQL `models` table + indexes
     └── hf_vectorizer/                # Vectorization package
         ├── __main__.py
@@ -207,9 +209,10 @@ is stored in the point payload.
 ## Step 3 — Load Metadata into PostgreSQL
 
 `initialize_postgres.py` is the one-shot setup: it waits for PostgreSQL, applies the
-schema from `init_postgres.sql` (the `models` table + indexes), then aggregates the
+schema from `init_postgres.sql` (the `models` table + indexes), aggregates the
 Parquet by `model_id` and upserts one row per model (with the chunk IDs that link
-back to Qdrant points).
+back to Qdrant points), then runs the enrichment pass (below) to fill in each
+model's full model card and parameter count from HuggingFace.
 
 ```bash
 # docker-compose exposes PostgreSQL on host port 5433
@@ -217,37 +220,33 @@ POSTGRES_PORT=5433 python src/initialize_postgres.py
 
 # Custom Parquet path
 POSTGRES_PORT=5433 python src/initialize_postgres.py --parquet-path data/embeddings.parquet
-```
 
-`load_parquet_to_postgres.py` is a metadata-only loader for when the schema already
-exists; otherwise prefer `initialize_postgres.py`.
+# Metadata only — skip the HuggingFace enrichment pass
+POSTGRES_PORT=5433 python src/initialize_postgres.py --skip-enrich
+```
 
 The `models` table stores: `model_id` (PK), `downloads`, `likes`, `pipeline_tag`,
 `library_name`, `created_at`, `last_modified`, `tags[]`, `chunk_ids[]`, `num_chunks`,
-`parameter_count` (total params from HuggingFace `safetensors.total`, when available).
+`parameter_count` (total params from HuggingFace `safetensors.total`, when available),
+and `model_card` (raw README.md markdown).
 
-### Backfill parameter counts
+### Enrichment — model cards & parameter counts
 
-After metadata is loaded, fetch parameter counts from HuggingFace for models listed
-in `data/processed_models.txt`:
+`enrich_models.py` fills in `models.model_card` (the repo's raw `README.md`) and
+`models.parameter_count` (from `safetensors.total`) for every model already in
+PostgreSQL. It runs automatically at the end of `initialize_postgres.py`; run it
+standalone to re-try or refresh:
 
 ```bash
-# docker-compose exposes PostgreSQL on host port 5433 (container listens on 5432)
-docker compose up -d postgres
-
-POSTGRES_PORT=5433 python src/load_parameter_counts.py
-
-# Or use the helper script (defaults POSTGRES_PORT=5433)
-bash scripts/load_parameter_counts.sh
+POSTGRES_PORT=5433 python src/enrich_models.py
 
 # Test on a small batch first
-POSTGRES_PORT=5433 python src/load_parameter_counts.py --limit 20 --dry-run
+POSTGRES_PORT=5433 python src/enrich_models.py --limit 20 --dry-run
 ```
 
-Optional `HF_TOKEN` improves rate limits and gated-model access. Re-runs skip rows
-that already have `parameter_count` unless you pass `--force`. The script also
-applies `ALTER TABLE ... ADD COLUMN IF NOT EXISTS parameter_count` for existing
-databases.
+Optional `HF_TOKEN` improves rate limits and gated-model access. Re-runs only fetch
+fields that are still empty, unless you pass `--force`. Use `--delay` to tune the
+pause between HuggingFace requests (default 0.2 s).
 
 ## Step 4 — Query
 

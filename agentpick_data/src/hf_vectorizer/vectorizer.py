@@ -18,7 +18,7 @@ from .embeddings import EmbeddingModel
 from .parsing import ReadmeParser
 from .storage import ParquetWriter, normalize_record
 from .config import (
-    DEFAULT_DATA_DIR, DEFAULT_EMBEDDINGS_FILE, DEFAULT_PROCESSED_FILE,
+    DEFAULT_DATA_DIR,
     DEFAULT_EMBEDDING_MODEL, DEFAULT_BATCH_SIZE,
     DEFAULT_MAX_TOKENS_PER_CHUNK, DEFAULT_CHUNK_OVERLAP_TOKENS,
     MIN_DOWNLOADS_THRESHOLD
@@ -243,12 +243,8 @@ class HFModelVectorizer:
                     pbar.update(1)
             
             # Final flush and close
-            try:
-                self.writer.flush()
-                self.writer.close()
-            finally:
-                if self.writer is not None:
-                    self.writer.close()
+            self.writer.flush()
+            self.writer.close()
             
             elapsed = time.time() - start_time
             

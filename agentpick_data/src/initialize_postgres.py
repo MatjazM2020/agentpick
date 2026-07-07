@@ -5,9 +5,11 @@ Orchestrates:
 1. Waits for PostgreSQL to be ready (health check with retries)
 2. Initializes schema from init_postgres.sql
 3. Loads embeddings parquet into models table
+4. Enriches models with HuggingFace model cards and parameter counts
+   (skippable with --skip-enrich; re-runnable standalone via enrich_models.py)
 
 Usage:
-    python initialize_postgres.py [--parquet-path /path/to/embeddings.parquet]
+    python initialize_postgres.py [--parquet-path /path/to/embeddings.parquet] [--skip-enrich]
 
 Environment variables:
     POSTGRES_HOST: PostgreSQL host (default: localhost)
@@ -29,6 +31,8 @@ from typing import Optional
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_batch
+
+from enrich_models import enrich_models
 
 # Configure logging
 logging.basicConfig(
@@ -249,6 +253,11 @@ def main():
         default=None,
         help='Path to embeddings parquet file'
     )
+    parser.add_argument(
+        '--skip-enrich',
+        action='store_true',
+        help='Skip fetching model cards and parameter counts from HuggingFace'
+    )
     args = parser.parse_args()
 
     # Resolve paths
@@ -297,6 +306,12 @@ def main():
 
         models = aggregate_by_model(df)
         insert_models_batch(conn, models)
+
+        # Step 4: Enrich with HuggingFace model cards and parameter counts
+        if args.skip_enrich:
+            logger.info("Skipping enrichment (--skip-enrich)")
+        else:
+            enrich_models(conn)
 
         conn.close()
         
