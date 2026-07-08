@@ -51,7 +51,7 @@ flowchart TB
 
   subgraph app [Application]
     API["FastAPI backend · :5002<br/>OpenAI-compatible API"]
-    AGENT["AgentPick agent<br/>(LLM + bounded function-calling loop)"]
+    AGENT["AgentPick agent<br/>(LLM + loop)"]
     TOOLS["Tools: search_models · filter_models · get_model_details"]
   end
 
