@@ -1,0 +1,121 @@
+{
+  "system": "agent",
+  "chat_model": "gpt-5.4-nano",
+  "k": 3,
+  "timestamp": "2026-07-08T14:46:50+00:00",
+  "summary": {
+    "multi_turn": {
+      "n": 2,
+      "asks_clarification_turn1": 1.0,
+      "bertscore_f1": -0.1569,
+      "bleu": 0.0066,
+      "mrr": 0.5,
+      "ndcg@3": 0.315,
+      "precision@3": 0.1667,
+      "recall@3": 0.1667,
+      "rougeL": 0.0958,
+      "ci95": {
+        "asks_clarification_turn1": [
+          1.0,
+          1.0
+        ],
+        "bertscore_f1": [
+          -0.1938,
+          -0.12
+        ],
+        "bleu": [
+          0.0042,
+          0.0091
+        ],
+        "mrr": [
+          0.0,
+          1.0
+        ],
+        "ndcg@3": [
+          0.0,
+          0.63
+        ],
+        "precision@3": [
+          0.0,
+          0.3333
+        ],
+        "recall@3": [
+          0.0,
+          0.3333
+        ],
+        "rougeL": [
+          0.0838,
+          0.1078
+        ]
+      }
+    },
+    "latency_s": {
+      "mean": 22.66,
+      "max": 30.6
+    }
+  },
+  "results": [
+    {
+      "id": "N1",
+      "category": "multi_turn",
+      "question": "Recommend a good coding model.\nIt's for a large production codebase; hardware is no constraint.",
+      "expected_models": [
+        "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+      ],
+      "answer": "Given you don’t have hardware constraints and it’s for a large production codebase, these are the best “coding-first” instruction/chat models to look at:\n\n1. **Qwen/Qwen3-Coder-480B-A35B-Instruct** — very large, coding-focused Instruct checkpoint; strong choice when you want the model to handle long, complex repo-aware tasks.\n2. **Qwen/Qwen3-Coder-Next-FP8** — also a coding-agent-focused variant (Next family); good if you’re deploying in FP8-friendly setups.\n3. **deepseek-ai/DeepSeek-Coder-V2-Instruct** — strong general coding assistant Instruct model; a solid alternative to Qwen if you prefer DeepSeek’s coding behavior.\n\nDo you want the model optimized for **(a)** generating code from specs, **(b)** codebase Q&A/refactoring, or **(c)** both equally?",
+      "latency_s": 30.6,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+          "Qwen/Qwen3-Coder-Next-FP8",
+          "deepseek-ai/DeepSeek-Coder-V2-Instruct"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 0.6300059872618923,
+        "rougeL": 0.1078,
+        "bleu": 0.0042,
+        "bertscore_f1": -0.12,
+        "asks_clarification_turn1": 1.0
+      },
+      "turn_answers": [
+        "Here are three strong open-source **coding** model picks from the Hugging Face catalog:\n\n1. **deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct** — great general-purpose coding assistant (instruct-tuned) with strong code performance and lots of usage.\n2. **deepseek-ai/DeepSeek-Coder-V2-Instruct** — the full “Instruct” variant; typically the better choice if you can use the larger size/compute.\n3. **ibm-granite/granite-3b-code-base-2k** — a smaller, dedicated **code** model (trained specifically for code generation/explanation/fixing), good when you want something lighter.\n\nWhat’s your target setup: **local (and how much VRAM)**, or **API**, and do you want **general coding help** or mostly **code execution/refactoring/fixing**?",
+        "Given you don’t have hardware constraints and it’s for a large production codebase, these are the best “coding-first” instruction/chat models to look at:\n\n1. **Qwen/Qwen3-Coder-480B-A35B-Instruct** — very large, coding-focused Instruct checkpoint; strong choice when you want the model to handle long, complex repo-aware tasks.\n2. **Qwen/Qwen3-Coder-Next-FP8** — also a coding-agent-focused variant (Next family); good if you’re deploying in FP8-friendly setups.\n3. **deepseek-ai/DeepSeek-Coder-V2-Instruct** — strong general coding assistant Instruct model; a solid alternative to Qwen if you prefer DeepSeek’s coding behavior.\n\nDo you want the model optimized for **(a)** generating code from specs, **(b)** codebase Q&A/refactoring, or **(c)** both equally?"
+      ]
+    },
+    {
+      "id": "N2",
+      "category": "multi_turn",
+      "question": "Which model should I run locally?\nI have a gaming laptop with 8 GB of VRAM.",
+      "expected_models": [
+        "Qwen/Qwen2.5-3B-Instruct",
+        "meta-llama/Llama-3.2-3B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct"
+      ],
+      "answer": "With **8 GB VRAM**, you’ll generally want a **~4B instruct/chat** model (often works best with **4-bit/quantized** weights).\n\nTop picks to run locally:\n\n1) **nvidia/Nemotron-Mini-4B-Instruct** — 4B instruct model; a solid local chat option that should fit comfortably on 8GB-class GPUs.  \n2) **unsloth/Qwen3-4B-Instruct-2507** — strong general-purpose instruct/chat model in the same 4B size class.  \n3) **unsloth/Phi-3.5-mini-instruct-bnb-4bit** — explicitly provided in **4-bit** form (“bnb-4bit”), which is usually the most VRAM-friendly way to run locally.\n\nNote: some results you might see are *GGUF/GPTQ re-uploads* (quantized variants). If you tell me whether you’re using **Transformers (PyTorch)**, **llama.cpp**, or **LM Studio**, I’ll narrow to the right weight format for your setup.  \n\n**Which runtime are you using (Transformers, llama.cpp, LM Studio, or something else)?**",
+      "latency_s": 14.73,
+      "scores": {
+        "predicted_models": [
+          "nvidia/Nemotron-Mini-4B-Instruct",
+          "unsloth/Qwen3-4B-Instruct-2507",
+          "unsloth/Phi-3.5-mini-instruct-bnb-4bit"
+        ],
+        "precision@3": 0.0,
+        "recall@3": 0.0,
+        "mrr": 0.0,
+        "ndcg@3": 0.0,
+        "rougeL": 0.0838,
+        "bleu": 0.0091,
+        "bertscore_f1": -0.1938,
+        "asks_clarification_turn1": 1.0
+      },
+      "turn_answers": [
+        "I can help you pick, but I need a bit more to choose the right *local* model.\n\n1) What’s your hardware/VRAM (and CPU only vs GPU)?  \n2) What do you want to do: chat assistant, coding, or something else?  \n3) Any preference for size/quality (e.g., “best that fits 8GB” vs “smallest that works”)?\n\nIf you answer those, I’ll recommend 3 concrete Hugging Face model IDs from the catalog that match your constraints.",
+        "With **8 GB VRAM**, you’ll generally want a **~4B instruct/chat** model (often works best with **4-bit/quantized** weights).\n\nTop picks to run locally:\n\n1) **nvidia/Nemotron-Mini-4B-Instruct** — 4B instruct model; a solid local chat option that should fit comfortably on 8GB-class GPUs.  \n2) **unsloth/Qwen3-4B-Instruct-2507** — strong general-purpose instruct/chat model in the same 4B size class.  \n3) **unsloth/Phi-3.5-mini-instruct-bnb-4bit** — explicitly provided in **4-bit** form (“bnb-4bit”), which is usually the most VRAM-friendly way to run locally.\n\nNote: some results you might see are *GGUF/GPTQ re-uploads* (quantized variants). If you tell me whether you’re using **Transformers (PyTorch)**, **llama.cpp**, or **LM Studio**, I’ll narrow to the right weight format for your setup.  \n\n**Which runtime are you using (Transformers, llama.cpp, LM Studio, or something else)?**"
+      ]
+    }
+  ]
+}

@@ -35,7 +35,7 @@ The design is **hybrid**: a single LLM agent (Microsoft Agent Framework) drives 
 
 Given a user query, AgentPick:
 
-1. **Interprets** intent and multi-turn follow-ups (the full chat history is passed on every request — the backend is stateless).
+1. **Interprets** intent and multi-turn follow-ups (the full chat history is passed on every request — the backend is stateless). Before each turn the context is bounded: a sliding window keeps the most recent history, and a topic classifier drops it entirely when the new message is an independent request.
 2. **Queries the catalog** through tools, as many times as needed within a bounded loop: semantic search over model-card chunks in **Qdrant**, structured filters and size/popularity rankings in **PostgreSQL**, full model-card lookup for verification.
 3. **Answers** with up to three ranked recommendations grounded in tool results, a clarifying question when the request is underspecified, a plain abstention when no catalog model satisfies the constraints, or a redirect when the message is off-topic.
 
@@ -182,7 +182,14 @@ Grounding guarantees encoded in the agent instructions and tool data ([`backend/
 - `filter_models` warns on unconstrained "smallest" sorts (the catalog's small tail is toy models) and reports `total_matches`, so the agent re-queries instead of concluding from one narrow filter.
 - Logically impossible constraints (e.g. under 1B **and** over 70B parameters) produce a plain abstention, and models the user names that are not in the catalog are reported as such.
 
-Every request is traced in an activity log (`backend/logs/agentpick.log`): request boundaries, each LLM loop turn with latency, and each tool call with its arguments, result count, and timing.
+### Context management
+
+The client sends the full chat history on every request (Open WebUI is stateless); `prepare_context` in `agent.py` bounds it before the agent runs:
+
+- **Sliding window** — only the last `AGENT_HISTORY_WINDOW` history messages (default 8) are kept, and each is truncated to `AGENT_HISTORY_MESSAGE_CHARS` (default 1500) so long past answers cannot crowd out the current request.
+- **Topic gating** — when history exists, one cheap tool-less LLM call classifies the newest message as `related` (a follow-up that needs the conversation) or `new` (a self-contained request). On `new`, history is dropped and the agent starts clean; on classifier failure the history is kept, the safe direction.
+
+Every request is traced in an activity log (`backend/logs/agentpick.log`): request boundaries, the context decision (`CONTEXT | topic=…`), each LLM loop turn with latency, and each tool call with its arguments, result count, and timing.
 
 ---
 
@@ -254,6 +261,8 @@ Environment variables consumed by the backend (defaults set in `docker-compose.y
 | `OPENAI_CHAT_MODEL_ID` | `gpt-5.4-nano` | Chat model driving the agent |
 | `OPENAI_BASE_URL` | — | Optional OpenAI-compatible endpoint |
 | `AGENT_MAX_TOOL_ITERATIONS` | `8` | Cap on LLM roundtrips in the tool loop per turn |
+| `AGENT_HISTORY_WINDOW` | `8` | Sliding window: prior chat messages kept as context per turn |
+| `AGENT_HISTORY_MESSAGE_CHARS` | `1500` | Per-message cap on history passed to the agent |
 | `QDRANT_URL` | `http://qdrant:6333` in Compose | Qdrant endpoint (or `QDRANT_HOST`/`QDRANT_PORT`) |
 | `QDRANT_COLLECTION_NAME` | `hf_models` | Vector collection |
 | `QDRANT_TOP_K_CHUNKS` | `120` | Chunk hits pulled before de-duplicating to model families |

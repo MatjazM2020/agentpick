@@ -25,3 +25,9 @@ CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-5.4-nano")
 
 # Bound the agent's tool-calling loop so a single turn stays fast and cheap.
 MAX_TOOL_ITERATIONS = int(os.getenv("AGENT_MAX_TOOL_ITERATIONS", "8"))
+
+# Context management: sliding window of prior chat messages (user + assistant)
+# kept per turn, and a per-message character cap so long past answers cannot
+# crowd out the current request.
+HISTORY_WINDOW_MESSAGES = int(os.getenv("AGENT_HISTORY_WINDOW", "8"))
+HISTORY_MESSAGE_CHARS = int(os.getenv("AGENT_HISTORY_MESSAGE_CHARS", "1500"))

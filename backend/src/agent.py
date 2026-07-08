@@ -15,13 +15,14 @@ import uuid
 from contextlib import contextmanager
 from typing import AsyncIterator, Callable, Iterator, Optional
 
-from agent_framework import Agent, ChatContext, ChatMiddleware, FunctionInvocationConfiguration
+from agent_framework import Agent, ChatContext, ChatMiddleware, FunctionInvocationConfiguration, Message
 from agent_framework.openai import OpenAIChatClient
 
 from src.core import config
 from src.core.agent_activity_log import (
     RequestContext,
     current_context,
+    log_activity,
     log_llm_loop_turn,
     log_request_end,
     log_request_start,
@@ -236,6 +237,87 @@ def _history_message_count(messages) -> int:
         return 0
 
 
+# ---------------------------------------------------------------------------
+# Context management
+# ---------------------------------------------------------------------------
+
+_TOPIC_PROMPT = """A user is chatting with an assistant that recommends language models.
+
+Conversation so far:
+{transcript}
+
+New user message:
+{latest}
+
+Classify the new message:
+- "related" — understanding it requires the conversation above: it refers to
+  earlier answers or models ("those", "it", "the second one"), or adds detail to
+  the earlier request without restating it.
+- "new" — it states its own complete requirements and can be answered correctly
+  with no knowledge of the conversation above, even if it mentions the earlier
+  topic only to move away from it.
+
+Reply with exactly one word: related or new."""
+
+
+async def _classify_topic(window: list, latest_text: str) -> str:
+    """One cheap LLM call: is the latest message 'related' to the window or 'new'?
+
+    Defaults to 'related' on any failure or unexpected output — keeping context
+    is the safe direction.
+    """
+    transcript = "\n".join(
+        f"{_message_role(m) or 'user'}: {_message_text(m)[:300]}" for m in window
+    )
+    prompt = _TOPIC_PROMPT.format(transcript=transcript, latest=latest_text[:600])
+    t0 = time.monotonic()
+    try:
+        result = await _plain().run(prompt)
+        answer = (result.text or "").strip().lower()
+    except Exception as e:
+        log_activity(f"CONTEXT | topic=related (classifier failed: {str(e)[:80]})")
+        return "related"
+    topic = "new" if answer.startswith("new") else "related"
+    log_activity(f"CONTEXT | topic={topic} | {(time.monotonic() - t0) * 1000:.0f}ms")
+    return topic
+
+
+def _bounded(message) -> "Message":
+    """The message itself, or a truncated copy if it exceeds the history cap."""
+    text = _message_text(message)
+    if len(text) <= config.HISTORY_MESSAGE_CHARS:
+        return message
+    return Message(
+        role=_message_role(message) or "user",
+        contents=[text[: config.HISTORY_MESSAGE_CHARS] + " […]"],
+    )
+
+
+async def prepare_context(messages):
+    """Bound the chat context for one agent turn.
+
+    Keeps a sliding window of the most recent history messages (each capped in
+    length), and drops history entirely when a topic classifier judges the new
+    message to be an independent request rather than a follow-up.
+    """
+    if isinstance(messages, str):
+        return messages
+    try:
+        items = [m for m in messages if _message_text(m)]
+    except TypeError:
+        return messages
+    if len(items) <= 1:
+        return items or messages
+    history, latest = items[:-1], items[-1]
+    window = history[-config.HISTORY_WINDOW_MESSAGES:]
+    if await _classify_topic(window, _message_text(latest)) == "new":
+        return [latest]
+    dropped = len(history) - len(window)
+    if dropped:
+        log_activity(f"CONTEXT | window kept {len(window)}/{len(history)} history messages")
+    return [_bounded(m) for m in window] + [latest]
+
+
 @contextmanager
 def request_scope(messages, streaming: bool = False) -> Iterator[None]:
     """Attach a RequestContext around one request (unless the caller already
@@ -267,7 +349,8 @@ def request_scope(messages, streaming: bool = False) -> Iterator[None]:
 async def stream_reply(messages) -> AsyncIterator[str]:
     """Yield text chunks of the agent's answer as they are generated."""
     with request_scope(messages, streaming=True):
-        async for update in get_agent().run(messages, stream=True):
+        context = await prepare_context(messages)
+        async for update in get_agent().run(context, stream=True):
             if update.text:
                 yield update.text
 
@@ -275,7 +358,8 @@ async def stream_reply(messages) -> AsyncIterator[str]:
 async def complete_reply(messages) -> str:
     """Full agent answer (non-streaming)."""
     with request_scope(messages):
-        result = await get_agent().run(messages)
+        context = await prepare_context(messages)
+        result = await get_agent().run(context)
     return (result.text or "").strip()
 
 
