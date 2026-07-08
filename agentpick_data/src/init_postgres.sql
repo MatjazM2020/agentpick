@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS models (
     model_card TEXT
 );
 
+-- Migration for databases created before these columns existed
+-- (CREATE TABLE IF NOT EXISTS does not add columns to an existing table)
+ALTER TABLE models ADD COLUMN IF NOT EXISTS parameter_count BIGINT;
+ALTER TABLE models ADD COLUMN IF NOT EXISTS model_card TEXT;
+
 -- Indexes for common filtering and ranking operations
 CREATE INDEX IF NOT EXISTS idx_models_downloads
 ON models(downloads DESC);

@@ -1,0 +1,5 @@
+# Evaluation-only extras (install into the backend virtualenv; they are NOT
+# part of the backend image). Needed for the explanation-quality text metrics.
+rouge-score      # ROUGE-L
+sacrebleu        # BLEU
+bert-score       # BERTScore (downloads roberta-large on first use)

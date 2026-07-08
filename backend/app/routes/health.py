@@ -1,8 +1,4 @@
-"""
-Health check endpoint.
-
-Provides basic liveness check for deployment monitoring.
-"""
+"""Health check endpoint (liveness for Docker healthchecks and monitoring)."""
 
 from fastapi import APIRouter
 
@@ -11,13 +7,4 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def health_check():
-    """
-    Health check endpoint.
-    
-    Returns:
-        Status information
-    """
-    return {
-        "status": "ok",
-        "service": "agentpick-recommendation-api"
-    }
+    return {"status": "ok", "service": "agentpick-recommendation-api"}

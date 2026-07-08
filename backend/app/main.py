@@ -1,106 +1,71 @@
-"""
-FastAPI application factory.
-
-Creates and configures the FastAPI app with OpenAI-compatible API endpoints.
-"""
+"""FastAPI application factory (OpenAI-compatible recommendation API)."""
 
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
-from src.core.agent_activity_log import configure_activity_log
+# Before the route imports below: src.core.config reads env at import time.
+load_dotenv()
 
-# Import route modules
-from app.routes import chat, models, health
+from app.routes import chat, health, models  # noqa: E402
+from src.core.agent_activity_log import configure_activity_log, log_activity  # noqa: E402
 
-
-# Configure logging
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
-    format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s"
+    format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifecycle manager — startup pre-warms slow resources."""
-    logger.info("Starting AgentPick Recommendation API")
-    load_dotenv()
-    log_path = configure_activity_log()
-    logger.info(f"Agent activity log: {log_path}")
+    """Serve immediately; warm slow resources (embedder, LLM client) in background."""
+    log_activity(f"=== AgentPick started | log={configure_activity_log()} ===")
 
-    # Pre-warm embedding model in thread pool (avoids cold-start on first request)
-    from src.core.llm import warmup as _warmup_embeddings
-    from src.core.agent_factory import get_chat_client
-    await asyncio.to_thread(_warmup_embeddings)
-    get_chat_client()
-    logger.info("Embedding model and OpenAI client pre-warmed")
+    async def _warmup() -> None:
+        try:
+            from src.agent import get_client
+            from src.core.llm import warmup
 
+            await asyncio.to_thread(warmup)
+            get_client()
+            logger.info("Embedding model and OpenAI client pre-warmed")
+        except Exception as e:
+            logger.warning(f"Background warmup failed (first request may be slower): {e}")
+
+    warmup_task = asyncio.create_task(_warmup())
     yield
-    logger.info("Shutting down AgentPick Recommendation API")
+    warmup_task.cancel()
+    try:
+        await warmup_task
+    except asyncio.CancelledError:
+        pass
 
 
 def create_app() -> FastAPI:
-    """
-    Create and configure the FastAPI application.
-    
-    Sets up:
-    - OpenAI-compatible endpoints
-    - CORS middleware
-    - Route registration
-    - Error handlers
-    
-    Returns:
-        Configured FastAPI app
-    """
-    
+    """Build the FastAPI app: CORS plus the health, models, and chat routes."""
     app = FastAPI(
         title="AgentPick Recommendation API",
         description="OpenAI-compatible API for model recommendations",
         version="1.0.0",
         lifespan=lifespan,
     )
-    
-    # === CORS Configuration ===
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Allow Open WebUI and other clients
+        allow_origins=["*"],  # Open WebUI runs on a different origin
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
-    # === Register Routes ===
-    # Health check
     app.include_router(health.router)
-    
-    # Models endpoint
     app.include_router(models.router)
-    
-    # Chat completions endpoint
     app.include_router(chat.router)
-    
-    # === Root Endpoint ===
-    @app.get("/")
-    async def root():
-        """API root."""
-        return {
-            "status": "ok",
-            "service": "agentpick-recommendation-api",
-            "openai_compatible": True,
-            "docs": "/docs",
-            "openapi": "/openapi.json"
-        }
-    
-    logger.info("FastAPI application created successfully")
     return app
 
 
-# Create app instance for uvicorn
 app = create_app()

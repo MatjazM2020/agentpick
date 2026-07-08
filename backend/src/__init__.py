@@ -1,2 +1,1 @@
-"""Multi-agent recommendation system."""
-
+"""AgentPick: a conversational Hugging Face model-recommendation agent."""

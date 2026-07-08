@@ -62,6 +62,8 @@ services:
       # OpenAI (Requirements Analyst + Synthesizer via Microsoft Agent Framework)
       - OPENAI_CHAT_MODEL_ID=${OPENAI_CHAT_MODEL_ID:-gpt-5.4-nano}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Activity log — must match the volume mount below
+      - AGENT_ACTIVITY_LOG=/app/logs/agentpick.log
     volumes:
       - backend_data:/app/data
       - ./backend/logs:/app/logs
@@ -74,8 +76,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 120s
     networks:
       - agentpick
 
@@ -99,6 +101,8 @@ services:
       - ENABLE_OPENAI_API=true
       - OPENAI_API_BASE_URL=http://backend:5000/v1
       - OPENAI_API_KEY=dummy
+      - DEFAULT_MODELS=agentpick-recommender
+      - DEFAULT_PINNED_MODELS=agentpick-recommender
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-me-in-production}
       - ENV=production
     volumes:
