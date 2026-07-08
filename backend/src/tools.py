@@ -95,14 +95,18 @@ async def filter_models(
     ] = None,
     sort_by: Annotated[
         str,
-        Field(description="Ordering: 'downloads', 'likes', 'smallest', 'largest', or 'newest'."),
+        Field(description="Ordering: 'downloads', 'likes', 'smallest', 'largest', or "
+                          "'newest'. Use 'largest'/'smallest' for size superlatives; "
+                          "'downloads' only when the user asks for popularity."),
     ] = "downloads",
     limit: Annotated[int, Field(description="Max models to return (1-25).", ge=1, le=25)] = 8,
 ) -> str:
     """Structured catalog query for precise constraints, popularity, and size rankings.
 
     Use for concrete requirements ("under 4B parameters", "coding model", "most
-    downloaded", "smallest instruction-tuned model"). The result includes
+    downloaded", "smallest instruction-tuned model") and for superlatives ("largest
+    instruct model", "biggest coder checkpoint") via sort_by=largest/smallest with
+    name_contains filters — not sort_by=downloads. The result includes
     'total_matches' (how many catalog models satisfy the filters overall) and
     'warnings' — heed both: a tiny total usually means the filter is too
     narrow, not that the catalog lacks such models. An empty result with no
