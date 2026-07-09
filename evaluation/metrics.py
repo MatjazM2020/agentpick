@@ -225,6 +225,7 @@ _ABSTENTION_PHRASES = (
     "impossible",
     "does not exist",
     "doesn't exist",
+    "not aware of any",
     "not found",
     "isn't found",
     "none match",
@@ -233,6 +234,8 @@ _ABSTENTION_PHRASES = (
     "not in our catalog",
     "not present in",
     "not listed in",
+    "didn't show up",
+    "did not show up",
     # empty catalog scans ("a scan ... returns nothing", "none meet the threshold")
     "returns nothing",
     "found nothing",

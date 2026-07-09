@@ -43,10 +43,13 @@ ENV PYTHONUNBUFFERED=1 \
 # Copy application code
 COPY backend/ /app/
 
-# Create non-root user and ensure the log directory exists and is writable
+# Create non-root user and ensure the log directory exists and is writable.
+# The Hugging Face cache dir must exist with appuser ownership so the named
+# volume mounted there (docker-compose) inherits writable permissions.
 RUN mkdir -p /app/logs \
     && useradd -m -u 1000 appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /home/appuser/.cache/huggingface \
+    && chown -R appuser:appuser /app /home/appuser/.cache
 USER appuser
 
 # Health check

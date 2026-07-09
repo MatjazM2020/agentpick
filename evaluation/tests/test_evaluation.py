@@ -183,6 +183,21 @@ def test_detects_impossible_empty_scan_with_markdown():
     assert metrics.detects_impossible("None meet a **2 trillion** threshold.")
 
 
+def test_detects_impossible_show_up_and_not_aware_paraphrases():
+    # gpt-5.4-mini paraphrases from the 20260709_010449 run: agent N5
+    # ("didn't show up in the catalog search") and llm_only N6
+    # ("not aware of any ... model").
+    assert metrics.detects_impossible(
+        "I wouldn’t choose **meta-llama/Llama-5-70B-Instruct** as my "
+        "default chatbot pick here, because it didn’t show up in the "
+        "catalog search at all."
+    )
+    assert metrics.detects_impossible(
+        "I’m not aware of any **open-weight, instruction-tuned** model "
+        "on the Hugging Face Hub with **at least 2 trillion parameters**."
+    )
+
+
 def test_asks_clarification():
     assert metrics.asks_clarification("Here are options. What hardware do you have?")
     assert not metrics.asks_clarification("1. org/model — best fit.")

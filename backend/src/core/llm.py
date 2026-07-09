@@ -44,6 +44,8 @@ def warmup() -> None:
     """Pre-load the embedding model and warm the LRU cache.
 
     Call this at startup (in a thread pool) so the first real request does not
-    pay the model-load penalty.
+    pay the model-load penalty. The first encodes after loading run several
+    times slower than steady state (~1s vs ~0.2s), so run two.
     """
     embed("warmup")
+    embed("warmup second pass")
