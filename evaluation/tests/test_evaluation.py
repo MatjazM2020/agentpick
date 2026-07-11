@@ -211,6 +211,14 @@ def test_asks_clarification_imperative_without_question_mark():
     )
 
 
+def test_asks_clarification_say_what_without_question_mark():
+    # Agent Q19 (161842 run): "say what ..." imperative clarification request.
+    assert metrics.asks_clarification(
+        "If you meant maximum quality per parameter rather than just smallest "
+        "size, say what hardware you have and I'll narrow it down."
+    )
+
+
 def test_asks_clarification_please_tell_me_without_question_mark():
     # Agent N2 turn 1 (184045 run): numbered setup questions without "?".
     assert metrics.asks_clarification(
