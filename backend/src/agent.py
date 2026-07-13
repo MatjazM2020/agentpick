@@ -243,11 +243,12 @@ def _history_message_count(messages) -> int:
 
 
 @contextmanager
-def request_scope(messages, streaming: bool = False) -> Iterator[None]:
+def request_scope(messages, streaming: bool = False, system: str = "agent") -> Iterator[None]:
     """Attach a RequestContext around one request (unless the caller already
     attached one) so the activity log shows REQUEST START/END boundaries and
     numbered tool calls for every entry point — API routes and the evaluation
-    harness alike."""
+    harness alike. ``system`` names the answering system in the log so agent
+    traces are distinguishable from baseline/background-task traces."""
     if current_context() is not None:
         yield
         return
@@ -257,6 +258,7 @@ def request_scope(messages, streaming: bool = False) -> Iterator[None]:
         _last_text(messages),
         streaming,
         history_messages=_history_message_count(messages),
+        system=system,
     )
     ctx.attach()
     status = "ok"
@@ -287,6 +289,6 @@ async def complete_reply(messages) -> str:
 
 async def complete_task(messages) -> str:
     """Answer an Open WebUI background task with a plain (tool-less) completion."""
-    with request_scope(messages):
+    with request_scope(messages, system="task"):
         result = await _plain().run(messages)
     return (result.text or "").strip()

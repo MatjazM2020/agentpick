@@ -206,8 +206,6 @@ The agent beats the tool-less baseline in every category with a graded answer; t
 Run it yourself (needs the populated data stores and `OPENAI_API_KEY`):
 
 ```bash
-backend/.venv/bin/pip install -r evaluation/requirements.txt   # text-metric extras
-
 backend/.venv/bin/python -m evaluation.run                     # both systems
 backend/.venv/bin/python -m evaluation.run --systems agent     # agent only
 backend/.venv/bin/python -m evaluation.compare evaluation/results/A.json evaluation/results/B.json

@@ -1,14 +1,12 @@
 """Ranking metrics and answer parsing.
 
 Standard information-retrieval metrics (precision@k, recall@k, MRR, nDCG@k)
-over ranked model-id lists, text-similarity metrics (ROUGE-L, BLEU,
-BERTScore) of the answer against the gold justification, plus the heuristics
-that turn a free-text agent answer into a ranked prediction: model-id
-extraction, abstention detection, and clarifying-question detection.
+over ranked model-id lists, plus the heuristics that turn a free-text agent
+answer into a ranked prediction: model-id extraction, abstention detection,
+and clarifying-question detection.
 
 All matching of model ids is case-insensitive; nDCG uses graded relevance
 derived from the gold ranking (best gold model gets the highest grade).
-The text metrics need the extras in ``evaluation/requirements.txt``.
 """
 
 from __future__ import annotations
@@ -155,51 +153,6 @@ def ndcg_at_k(predicted: Sequence[str], gold: Sequence[str], k: int) -> float:
     ideal = sorted(grades.values(), reverse=True)[:k]
     idcg = sum(g / math.log2(rank + 1) for rank, g in enumerate(ideal, start=1))
     return dcg / idcg if idcg > 0 else 0.0
-
-
-# ---------------------------------------------------------------------------
-# Explanation quality — text similarity to the gold justification
-# ---------------------------------------------------------------------------
-
-_rouge = None
-_bert_scorer = None
-
-
-def text_scores(answer: str, reference: str) -> dict:
-    """ROUGE-L, BLEU, and BERTScore-F1 of an answer against a reference
-    explanation (the dataset's gold ``justification``).
-
-    Scores are normalized: ROUGE-L F-measure and BLEU in [0, 1]; BERTScore F1
-    rescaled with the English baseline (unrelated texts score near 0, and can
-    dip slightly below). Scorers are loaded once and reused.
-    """
-    global _rouge, _bert_scorer
-    try:
-        import sacrebleu
-        from bert_score import BERTScorer
-        from rouge_score import rouge_scorer
-    except ImportError as e:
-        raise ImportError(
-            "Text metrics need the evaluation extras: "
-            "pip install -r evaluation/requirements.txt"
-        ) from e
-
-    if not (answer or "").strip() or not (reference or "").strip():
-        return {"rougeL": 0.0, "bleu": 0.0, "bertscore_f1": 0.0}
-
-    if _rouge is None:
-        _rouge = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
-    if _bert_scorer is None:
-        _bert_scorer = BERTScorer(lang="en", rescale_with_baseline=True)
-
-    rouge_l = _rouge.score(reference, answer)["rougeL"].fmeasure
-    bleu = sacrebleu.sentence_bleu(answer, [reference]).score / 100.0
-    _, _, f1 = _bert_scorer.score([answer], [reference])
-    return {
-        "rougeL": round(rouge_l, 4),
-        "bleu": round(bleu, 4),
-        "bertscore_f1": round(float(f1[0]), 4),
-    }
 
 
 _ABSTENTION_PHRASES = (

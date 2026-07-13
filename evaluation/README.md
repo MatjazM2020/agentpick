@@ -24,8 +24,15 @@ feeds the turns one by one, passing the growing dialogue each time.
 
 | System | Description |
 |---|---|
-| `agent` | Full AgentPick: LLM orchestrator + catalog tools (Qdrant + PostgreSQL) |
+| `agent` | Full AgentPick: LLM orchestrator + catalog tools (Qdrant + PostgreSQL) in an open-ended loop — the model sees tool results and decides what to run next |
 | `llm_only` | Same LLM, no catalog access — answers from parametric knowledge |
+| `single_round` | LLM-parameterized retrieval without a loop, as a fixed code pipeline: one planning completion translates the request into query parameters (JSON), code runs exactly one structured filter (PostgreSQL) and one semantic search (Qdrant) with them, and a second completion answers from those results. The LLM adapts the queries but never sees results before they are final — the `agent` − `single_round` delta isolates the agentic loop itself |
+| `qdrant_only` | Fixed vanilla RAG: code (not the LLM) embeds the user's words, retrieves top-8 from Qdrant, and the LLM answers in one completion. No structured store, no adaptivity |
+
+The ladder reads bottom-up: `llm_only` → `qdrant_only` adds retrieval grounding,
+`qdrant_only` → `single_round` adds LLM-directed retrieval (structured store +
+adapted parameters), and `single_round` → `agent` adds only the ability to react
+to results and query again — the agentic loop.
 
 ## Metrics
 
@@ -36,20 +43,14 @@ org prefix) are also credited, so systems are not penalized for id
 formatting.
 
 - **deterministic / ranking:** precision@3, recall@3, MRR, nDCG@3
-  (graded relevance from the gold order, so rank errors are penalized), plus
-  explanation quality as ROUGE-L, BLEU, and BERTScore-F1 (rescaled with the
-  English baseline) of the answer against the question's gold `justification`.
+  (graded relevance from the gold order, so rank errors are penalized).
 - **ambiguous:** clarification rate (answer asks a question) and expected-model
   mention rate.
 - **impossible:** abstention rate (states no model fits / is not in the catalog).
-- **multi_turn:** turn-1 clarification rate plus the ranking and explanation
-  metrics on the final answer.
+- **multi_turn:** turn-1 clarification rate plus the ranking metrics on the
+  final answer.
 - **off_topic:** redirect rate (answer recommends no models).
 - **all:** wall-clock latency per answer (whole dialogue for multi-turn).
-
-The justification is a reference explanation, not a full reference answer, so
-the text metrics are a comparative proxy for explanation quality between
-systems rather than absolute scores.
 
 Per-category summaries report the mean of each metric with a
 percentile-bootstrap 95% confidence interval (when n ≥ 2). The abstention and
@@ -59,10 +60,8 @@ graded by a human (e.g. explanation quality).
 
 ## Running
 
-Requires the data stores (Qdrant + Postgres, populated), `OPENAI_API_KEY`
-for the LLM-based systems, and the evaluation extras
-(`backend/.venv/bin/pip install -r evaluation/requirements.txt`; BERTScore
-downloads its scoring model on first use).
+Requires the data stores (Qdrant + Postgres, populated) and `OPENAI_API_KEY`
+for the LLM-based systems.
 
 Run from the repository root with the backend virtualenv (the module puts
 `backend/` on `sys.path` itself):
