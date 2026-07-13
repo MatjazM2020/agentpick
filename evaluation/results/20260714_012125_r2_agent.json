@@ -1,0 +1,660 @@
+{
+  "system": "agent",
+  "chat_model": "gpt-5.4-mini",
+  "k": 3,
+  "timestamp": "2026-07-13T23:31:25+00:00",
+  "summary": {
+    "deterministic": {
+      "n": 4,
+      "mrr": 1.0,
+      "ndcg@3": 0.845,
+      "precision@3": 0.4167,
+      "recall@3": 0.875,
+      "ci95": {
+        "mrr": [
+          1.0,
+          1.0
+        ],
+        "ndcg@3": [
+          0.5351,
+          1.0
+        ],
+        "precision@3": [
+          0.3333,
+          0.5833
+        ],
+        "recall@3": [
+          0.625,
+          1.0
+        ]
+      }
+    },
+    "ranking": {
+      "n": 13,
+      "mrr": 0.5897,
+      "ndcg@3": 0.4595,
+      "precision@3": 0.4359,
+      "recall@3": 0.4103,
+      "ci95": {
+        "mrr": [
+          0.3718,
+          0.8077
+        ],
+        "ndcg@3": [
+          0.2775,
+          0.6339
+        ],
+        "precision@3": [
+          0.2564,
+          0.6154
+        ],
+        "recall@3": [
+          0.2308,
+          0.5897
+        ]
+      }
+    },
+    "ambiguous": {
+      "n": 2,
+      "asks_clarification": 0.5,
+      "mentions_expected": 0.0,
+      "ci95": {
+        "asks_clarification": [
+          0.0,
+          1.0
+        ],
+        "mentions_expected": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "impossible": {
+      "n": 3,
+      "abstains": 0.6667,
+      "ci95": {
+        "abstains": [
+          0.0,
+          1.0
+        ]
+      }
+    },
+    "multi_turn": {
+      "n": 2,
+      "asks_clarification_turn1": 1.0,
+      "mrr": 1.0,
+      "ndcg@3": 0.6963,
+      "precision@3": 0.5,
+      "recall@3": 0.5,
+      "ci95": {
+        "asks_clarification_turn1": [
+          1.0,
+          1.0
+        ],
+        "mrr": [
+          1.0,
+          1.0
+        ],
+        "ndcg@3": [
+          0.63,
+          0.7625
+        ],
+        "precision@3": [
+          0.3333,
+          0.6667
+        ],
+        "recall@3": [
+          0.3333,
+          0.6667
+        ]
+      }
+    },
+    "off_topic": {
+      "n": 1,
+      "redirects": 1.0
+    },
+    "latency_s": {
+      "mean": 6.32,
+      "max": 13.68
+    }
+  },
+  "results": [
+    {
+      "id": "D1",
+      "category": "deterministic",
+      "question": "I need the smallest available instruction-tuned language model for a highly resource-constrained device. I care only about minimizing model size while retaining chat capabilities.",
+      "expected_models": [
+        "trl-internal-testing/tiny-Qwen3ForCausalLM-Instruct-2507",
+        "SupraLabs/Supra-50M-Instruct"
+      ],
+      "answer": "The smallest instruction-tuned chat-capable model I found in the catalog is:\n\n1. **SupraLabs/Supra-50M-Instruct** — **~51.8M parameters**, which is far smaller than the next options; it’s explicitly instruct-tuned and marked for text generation/chat use.\n\nIf your only goal is absolute minimum size, this is the clear pick.  \nIf you want, I can also give you the smallest **practical** instruction-tuned model for better chat quality while still staying tiny.",
+      "latency_s": 3.46,
+      "scores": {
+        "predicted_models": [
+          "SupraLabs/Supra-50M-Instruct"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.5,
+        "mrr": 1.0,
+        "ndcg@3": 0.38009376671593426
+      }
+    },
+    {
+      "id": "D2",
+      "category": "deterministic",
+      "question": "I want the largest original, non-quantized distilled reasoning model available. It must explicitly be a distilled variant of a larger reasoning model.",
+      "expected_models": [
+        "deepseek-ai/DeepSeek-R1-Distill-Llama-70B"
+      ],
+      "answer": "The largest **original, non-quantized, distilled reasoning model** I found is:\n\n1. **deepseek-ai/DeepSeek-R1-Distill-Llama-70B** — this is the largest original checkpoint in the catalog that is explicitly a **distilled** reasoning model, and its card says DeepSeek open-sourced distilled models from DeepSeek-R1.\n\nI excluded the larger-looking GGUF/FP8/AWQ variants because they’re quantized/repackaged re-uploads, not original checkpoints.\n\nIf you want, I can also list the next-largest original distilled reasoning models below 70B.",
+      "latency_s": 5.39,
+      "scores": {
+        "predicted_models": [
+          "deepseek-ai/DeepSeek-R1-Distill-Llama-70B"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 1.0,
+        "mrr": 1.0,
+        "ndcg@3": 1.0
+      }
+    },
+    {
+      "id": "D3",
+      "category": "deterministic",
+      "question": "I want the instruction-tuned language model with the highest parameter count available. Ignore efficiency, cost, and deployment constraints.",
+      "expected_models": [
+        "moonshotai/Kimi-K2-Instruct-0905",
+        "moonshotai/Kimi-K2-Instruct"
+      ],
+      "answer": "The highest-parameter-count instruction-tuned model I found is **moonshotai/Kimi-K2-Instruct-0905** at **1,026,470,735,448 parameters**.\n\nA close second is:\n- **moonshotai/Kimi-K2-Instruct** — **1,026,470,731,056 parameters**\n\nI’m recommending the **0905** version as the current highest-parameter instruction-tuned checkpoint in the catalog.",
+      "latency_s": 2.8,
+      "scores": {
+        "predicted_models": [
+          "moonshotai/Kimi-K2-Instruct-0905",
+          "moonshotai/Kimi-K2-Instruct"
+        ],
+        "precision@3": 0.6666666666666666,
+        "recall@3": 1.0,
+        "mrr": 1.0,
+        "ndcg@3": 1.0
+      }
+    },
+    {
+      "id": "Q5",
+      "category": "ranking",
+      "question": "I want to run a model locally on a GPU with 8 GB of VRAM. I need an instruction-tuned general assistant under 4B parameters with strong multilingual support. Which models do you recommend?",
+      "expected_models": [
+        "Qwen/Qwen2.5-3B-Instruct",
+        "meta-llama/Llama-3.2-3B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct"
+      ],
+      "answer": "For an 8 GB GPU, I’d focus on 1–3B class instruct models with strong multilingual coverage rather than 4B+; they’re a safer fit for local inference.\n\nTop picks:\n1. **Qwen/Qwen2.5-3B-Instruct** — Best overall fit here: under 4B, instruction-tuned, and the model card explicitly says it supports **29+ languages** with strong general-assistant behavior.\n2. **meta-llama/Llama-3.1-8B-Instruct** — Strong multilingual assistant, but **too large for your <4B requirement** and not the right fit for 8 GB if you want comfortable local running.\n3. **meta-llama/Llama-3.2-1B-Instruct** — Very easy to run on 8 GB and has multilingual language coverage, but it’s much smaller and likely weaker than Qwen 2.5 3B for general assistant quality.\n4. **Qwen/Qwen2.5-1.5B-Instruct** — Good smaller fallback if you want more headroom; still instruction-tuned with multilingual support, but below the 3B tier.\n\nMy recommendation: **Qwen/Qwen2.5-3B-Instruct** is the best match for your constraints.\n\nIf you want, I can also narrow this down to the **best 4-bit quantized option** for your exact GPU and inference stack.",
+      "latency_s": 7.11,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-3B-Instruct",
+          "meta-llama/Llama-3.1-8B-Instruct",
+          "meta-llama/Llama-3.2-1B-Instruct",
+          "Qwen/Qwen2.5-1.5B-Instruct"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 0.6300059872618923
+      }
+    },
+    {
+      "id": "Q6",
+      "category": "ranking",
+      "question": "I need a model for software engineering assistance. It should be coding-focused, under 15B parameters, instruction tuned, and suitable for local deployment. Which models do you recommend?",
+      "expected_models": [
+        "Qwen/Qwen2.5-Coder-14B-Instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
+        "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
+      ],
+      "answer": "For coding-focused software engineering assistance under 15B and instruction-tuned, my top picks are:\n\n1. **Qwen/Qwen2.5-Coder-7B-Instruct** — Best balanced choice here: it’s explicitly code-focused, instruction-tuned, 7.61B params, and the model card says it supports long context and is intended for real-world coding, code reasoning, and code fixing.\n\n2. **deepseek-ai/deepseek-coder-7b-instruct-v1.5** — Strong 7B code assistant option with a coding-first specialization and a good local-deployment size.\n\n3. **Qwen/Qwen2.5-Coder-14B-Instruct** — If you can afford closer to the top of your 15B cap, this is the larger code-specialized option in the same family.\n\nIf you want a smaller/local-friendlier fallback:\n- **Qwen/Qwen2.5-Coder-1.5B-Instruct** — very lightweight, but you’ll give up a lot of coding quality vs the 7B/14B options.\n\nI’d avoid the AWQ/GPTQ variants unless you specifically want that quantized format; the catalog flags them as re-uploads and prefers the original checkpoint.\n\nIf you tell me your target hardware, I can narrow this to the best fit for your VRAM/RAM budget.",
+      "latency_s": 6.75,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-Coder-7B-Instruct",
+          "deepseek-ai/deepseek-coder-7b-instruct-v1.5",
+          "Qwen/Qwen2.5-Coder-14B-Instruct",
+          "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+        ],
+        "precision@3": 1.0,
+        "recall@3": 1.0,
+        "mrr": 1.0,
+        "ndcg@3": 0.8675034925694372
+      }
+    },
+    {
+      "id": "Q7",
+      "category": "ranking",
+      "question": "I want maximum reasoning quality. Recommend reasoning-focused, instruction-tuned models for text generation only.",
+      "expected_models": [
+        "deepseek-ai/DeepSeek-R1-0528",
+        "deepseek-ai/DeepSeek-R1",
+        "Qwen/QwQ-32B"
+      ],
+      "answer": "For maximum reasoning quality in text-generation-only, instruction-tuned models, I’d start with these:\n\n1. **Qwen/Qwen3-235B-A22B-Instruct-2507** — strongest verified reasoning-oriented instruct model in the catalog results here; its card explicitly calls out major gains in logical reasoning, math, science, and long-context understanding, and shows top reasoning scores like AIME25 and GPQA.\n2. **skt/A.X-K1** — a huge MoE model explicitly designed for efficient high-capacity reasoning and instruction following, with a built-in think/non-think split for reasoning depth control.\n3. **moonshotai/Kimi-K2-Instruct** — a 1T-parameter MoE instruct model described as optimized for frontier knowledge, reasoning, and agentic problem-solving; the card says it’s the post-trained drop-in chat/agent model.\n4. **meta-llama/Meta-Llama-3.1-405B-Instruct** — very large general instruct baseline; solid if you want a widely used high-end chat model, though the card I verified is less reasoning-specific than the top three.\n5. **Qwen/Qwen3-30B-A3B-Instruct-2507** — much smaller than the top tier, but still explicitly improved for logical reasoning and instruction following; a better practical pick if you can’t run 200B+ models.\n\nIf you want, I can also narrow this to:\n- **best open-weight reasoning model under a VRAM limit**\n- **best smaller reasoning model**\n- **best model for math/reasoning specifically**",
+      "latency_s": 7.63,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen3-235B-A22B-Instruct-2507",
+          "skt/A.X-K1",
+          "moonshotai/Kimi-K2-Instruct",
+          "meta-llama/Meta-Llama-3.1-405B-Instruct",
+          "Qwen/Qwen3-30B-A3B-Instruct-2507"
+        ],
+        "precision@3": 0.0,
+        "recall@3": 0.0,
+        "mrr": 0.0,
+        "ndcg@3": 0.0
+      }
+    },
+    {
+      "id": "Q8",
+      "category": "ranking",
+      "question": "I am building a multilingual customer-support chatbot. I need a model under 10B parameters, instruction tuned, multilingual, and with low inference cost. Which models do you recommend?",
+      "expected_models": [
+        "Qwen/Qwen2.5-7B-Instruct",
+        "meta-llama/Llama-3.1-8B-Instruct",
+        "google/gemma-2-9b-it"
+      ],
+      "answer": "For a multilingual customer-support chatbot under 10B with low inference cost, I’d shortlist these:\n\n1. **Qwen/Qwen2.5-3B-Instruct** — best cost/performance balance here: 3.09B params, instruction-tuned, and explicitly supports 29+ languages.\n2. **Qwen/Qwen3-4B-Instruct-2507** — still relatively cheap at 4.0B, with stronger multilingual capability and improved instruction following; a good upgrade if you can spend a bit more.\n3. **meta-llama/Llama-3.1-8B-Instruct** — solid multilingual dialogue model, but it’s near the top of your budget and will cost more to serve than the 3B–4B options.\n\nMy practical pick for low cost is **Qwen/Qwen2.5-3B-Instruct**. If you want higher quality and can afford a bit more latency/VRAM, choose **Qwen/Qwen3-4B-Instruct-2507**.\n\nNotes:\n- I excluded quantized re-uploads like **Qwen/Qwen2.5-7B-Instruct-AWQ** because you asked for general recommendations, not a specific deployment format.\n- For customer support, Qwen’s model card explicitly mentions better structured outputs and multilingual support, which is a nice fit.\n\nIf you want, I can next narrow this down by:\n- your target hardware/VRAM,\n- which languages matter most,\n- or whether you prefer Apache-2.0 vs community licenses.",
+      "latency_s": 7.66,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-3B-Instruct",
+          "Qwen/Qwen3-4B-Instruct-2507",
+          "meta-llama/Llama-3.1-8B-Instruct",
+          "Qwen/Qwen2.5-7B-Instruct-AWQ"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.3333333333333333,
+        "mrr": 0.3333333333333333,
+        "ndcg@3": 0.21000199575396408
+      }
+    },
+    {
+      "id": "Q9",
+      "category": "ranking",
+      "question": "I need a model for CPU-only deployment: less than 2B parameters, chat or instruction tuned, with a good balance of quality and speed. Which models do you recommend?",
+      "expected_models": [
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "google/gemma-3-1b-it",
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+      ],
+      "answer": "For CPU-only deployment under 2B params, I’d focus on these original checkpoints:\n\n1. **Qwen/Qwen2.5-1.5B-Instruct** — Best all-around balance here: strong quality for its size, clearly instruction-tuned, and still small enough to be practical on CPU.\n2. **meta-llama/Llama-3.2-1B-Instruct** — Good if you want a very solid general chat model with a bit more headroom for speed than 1.5B models.\n3. **Qwen/Qwen2.5-0.5B-Instruct** — Much faster and lighter; a good fallback if latency matters more than answer quality.\n4. **Qwen/Qwen1.5-1.8B-Chat** — Still under your limit and a reasonable “upper end” option, but it’s an older generation than the Qwen2.5 picks.\n5. **TinyLlama/TinyLlama-1.1B-Chat-v1.0** — Popular and light, but I’d place it behind the Qwen and Llama options on quality.\n\nMy short recommendation:\n- **Best balance:** `Qwen/Qwen2.5-1.5B-Instruct`\n- **Faster/smaller:** `meta-llama/Llama-3.2-1B-Instruct`\n- **Smallest practical chat model:** `Qwen/Qwen2.5-0.5B-Instruct`\n\nIf you want, I can also narrow this to **best CPU-only pick for low RAM**, **best open license**, or **best with GGUF quantization**.",
+      "latency_s": 4.37,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-1.5B-Instruct",
+          "meta-llama/Llama-3.2-1B-Instruct",
+          "Qwen/Qwen2.5-0.5B-Instruct",
+          "Qwen/Qwen1.5-1.8B-Chat",
+          "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 0.6300059872618923
+      }
+    },
+    {
+      "id": "Q10",
+      "category": "ranking",
+      "question": "I need a model for academic writing assistance. It should be instruction tuned, have at least 7B parameters, and offer strong general language quality. Which models do you recommend?",
+      "expected_models": [
+        "meta-llama/Llama-3.1-8B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
+        "mistralai/Mistral-7B-Instruct-v0.2"
+      ],
+      "answer": "For academic writing assistance, I’d prioritize instruction-tuned general assistants with strong broad language quality rather than code-specialists.\n\n1. **Qwen/Qwen2.5-14B-Instruct** — Strong general-purpose instruction model at 14B; a good balance of writing quality, fluency, and room for nuanced drafting.\n2. **meta-llama/Llama-3.1-8B-Instruct** — Excellent general language quality for its size; a solid choice if you want a lighter model while staying above 7B.\n3. **Qwen/Qwen2.5-7B-Instruct** — Meets your minimum size exactly and is a strong all-around assistant; good if you want the smallest option that still fits your requirement.\n4. **mistralai/Mistral-7B-Instruct-v0.2** — Another strong 7B instruction-tuned baseline; reliable for rewriting, polishing, and general drafting.\n5. **LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct** — Fits your size floor and is instruction-tuned; worth considering if you want a less common alternative.\n\nIf you want the best single pick for academic writing, I’d start with **Qwen/Qwen2.5-14B-Instruct**. If you tell me your VRAM or whether you need open-weight/Apache-style licensing, I can narrow this to the best practical option.",
+      "latency_s": 4.69,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-14B-Instruct",
+          "meta-llama/Llama-3.1-8B-Instruct",
+          "Qwen/Qwen2.5-7B-Instruct",
+          "mistralai/Mistral-7B-Instruct-v0.2",
+          "LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct"
+        ],
+        "precision@3": 0.6666666666666666,
+        "recall@3": 0.6666666666666666,
+        "mrr": 0.5,
+        "ndcg@3": 0.6074915180456525
+      }
+    },
+    {
+      "id": "Q11",
+      "category": "ranking",
+      "question": "I want the highest quality open-source assistant for general-purpose chat. It must be instruction tuned; I have no hardware constraints. Which models do you recommend?",
+      "expected_models": [
+        "meta-llama/Llama-3.1-405B-Instruct",
+        "openai/gpt-oss-120b",
+        "meta-llama/Llama-3.3-70B-Instruct"
+      ],
+      "answer": "For the highest-quality open-source-ish general chat assistant, I’d shortlist these:\n\n1. **moonshotai/Kimi-K2-Instruct-0905** — The model card calls it the “latest, most capable version” of Kimi K2, and it’s explicitly “best for drop-in, general-purpose chat and agentic experiences.” It also has the strongest catalog presence among the general assistant candidates I checked.\n\n2. **moonshotai/Kimi-K2-Instruct** — Same family, earlier release. Still a top-tier general-purpose instruct model, but the 0905 revision is the one to prefer.\n\n3. **meta-llama/Llama-3.1-405B-Instruct** — Very strong general assistant and a classic flagship instruction-tuned chat model, but the card/license is the Llama community license rather than a fully permissive open-source license.\n\n4. **deepseek-ai/DeepSeek-V2-Chat** — A strong chat model with a large MoE architecture and good reputation for general assistant behavior, though it’s older than Kimi K2.\n\n5. **google/gemma-2-27b-it** — Much smaller than the frontier giants, but still a solid instruction-tuned assistant if you want a high-quality model with a lighter footprint.\n\nIf you want the single best pick from this catalog slice, I’d start with **moonshotai/Kimi-K2-Instruct-0905**.\n\nIf you want, I can also narrow this to:\n- **most permissive license**\n- **best for long-context chat**\n- **best non-MoE assistant**\n- **best open model under a specific license**",
+      "latency_s": 7.96,
+      "scores": {
+        "predicted_models": [
+          "moonshotai/Kimi-K2-Instruct-0905",
+          "moonshotai/Kimi-K2-Instruct",
+          "meta-llama/Llama-3.1-405B-Instruct",
+          "deepseek-ai/DeepSeek-V2-Chat",
+          "google/gemma-2-27b-it"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.3333333333333333,
+        "mrr": 0.3333333333333333,
+        "ndcg@3": 0.31500299363094614
+      }
+    },
+    {
+      "id": "N3",
+      "category": "ranking",
+      "question": "I need a model to answer biomedical and medical questions. It should be under 10B parameters.",
+      "expected_models": [
+        "StanfordAIMI/GREEN-RadLlama2-7b",
+        "BioMistral/BioMistral-7B",
+        "microsoft/biogpt"
+      ],
+      "answer": "For biomedical/medical QA under 10B, I’d start with:\n\n1. **aaditya/Llama3-OpenBioLLM-8B** — 8B parameters, explicitly medical/biomedical-focused, and the card shows it as an instruct/chat-style model with a healthcare-oriented system prompt.  \n2. **BioMistral/BioMistral-7B** — 7B parameters, medical/biology tagged, and a solid smaller alternative if you want a domain model with broader biomedical focus.\n\nIf you want a more conservative “research-text-trained” option rather than an assistant-tuned one, **stanford-crfm/BioMedLM** is also in the catalog, though its card excerpt suggests it’s more biomedical language modeling than a chat assistant.\n\nIf you want, I can narrow this to:\n- best for **clinical-style Q&A**\n- best for **general biomedical literature questions**\n- best for **lowest VRAM / fastest inference**",
+      "latency_s": 5.16,
+      "scores": {
+        "predicted_models": [
+          "aaditya/Llama3-OpenBioLLM-8B",
+          "BioMistral/BioMistral-7B",
+          "stanford-crfm/BioMedLM"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.3333333333333333,
+        "mrr": 0.5,
+        "ndcg@3": 0.26499301486112564
+      }
+    },
+    {
+      "id": "N4",
+      "category": "ranking",
+      "question": "I need a dedicated machine-translation model to translate documents between languages, under 3B parameters.",
+      "expected_models": [
+        "tencent/Hy-MT2-1.8B",
+        "tencent/HY-MT1.5-1.8B",
+        "google-t5/t5-3b"
+      ],
+      "answer": "For a dedicated machine-translation model under 3B, my best fit is:\n\n1. **tencent/Hy-MT2-1.8B** — purpose-built translation model, 1.8B params, multilingual (33 languages per the card), and explicitly aimed at real-world and domain-specific translation.\n\nOther viable option:\n2. **tencent/HY-MT1.5-1.8B** — also a dedicated translation model at 1.8B, but it’s an older release than Hy-MT2.\n\nI’d pick **Hy-MT2-1.8B** first unless you have a reason to prefer the earlier HY-MT1.5 line. If you want, I can also narrow this down by language pair or by whether you need document-length translation quality versus speed.",
+      "latency_s": 4.85,
+      "scores": {
+        "predicted_models": [
+          "tencent/Hy-MT2-1.8B",
+          "tencent/HY-MT1.5-1.8B"
+        ],
+        "precision@3": 0.6666666666666666,
+        "recall@3": 0.6666666666666666,
+        "mrr": 1.0,
+        "ndcg@3": 0.894999002123018
+      }
+    },
+    {
+      "id": "Q15",
+      "category": "ambiguous",
+      "question": "What is the best open-source model for a student?",
+      "expected_models": [
+        "meta-llama/Llama-3.1-8B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "google/gemma-3-1b-it"
+      ],
+      "answer": "If you want one strong default for a student, I’d pick **Qwen/Qwen3-4B-Instruct-2507**.\n\nWhy this one:\n1. It’s a modern general-purpose instruct model with strong reported results in **reasoning, writing, math, science, coding, and multilingual use**.\n2. At **4.0B parameters**, it’s much easier to run than giant flagship models, so it’s a practical student-friendly choice.\n3. Its model card explicitly highlights **better subjective/open-ended responses** and **long-context understanding**.\n\nIf you have enough hardware and want a higher-end option, the next step up I’d consider is **Qwen/Qwen3-30B-A3B-Instruct-2507**.\n\nIf you tell me your device or VRAM limit, I can narrow it to the best model that will actually run for you.",
+      "latency_s": 6.95,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen3-4B-Instruct-2507",
+          "Qwen/Qwen3-30B-A3B-Instruct-2507"
+        ],
+        "asks_clarification": 1.0,
+        "mentions_expected": 0.0
+      }
+    },
+    {
+      "id": "Q19",
+      "category": "ambiguous",
+      "question": "I want the most efficient model.",
+      "expected_models": [
+        "SupraLabs/Supra-50M-Instruct",
+        "LiquidAI/LFM2.5-350M",
+        "Qwen/Qwen2.5-3B-Instruct"
+      ],
+      "answer": "If by “most efficient” you mean **smallest usable general chat/instruct model**, a good catalog-grounded pick is:\n\n1. **HuggingFaceTB/SmolLM2-135M-Instruct** — among the smallest real instruct-style assistants in the catalog; much more practical than the toy/research miniatures at the absolute bottom.\n\nIf you mean **smallest possible model of any kind**, the catalog’s absolute smallest entries are mostly **toy/research miniatures** and not good general assistants.\n\nIf you want, I can narrow this to:\n- **best efficiency for chat**\n- **best efficiency for coding**\n- **best model under a VRAM limit** (e.g. 4 GB, 8 GB, 16 GB)",
+      "latency_s": 3.11,
+      "scores": {
+        "predicted_models": [
+          "HuggingFaceTB/SmolLM2-135M-Instruct"
+        ],
+        "asks_clarification": 0.0,
+        "mentions_expected": 0.0
+      }
+    },
+    {
+      "id": "Q20",
+      "category": "impossible",
+      "question": "Recommend a model that is under 1B parameters, larger than 70B parameters, and optimized for mobile.",
+      "expected_models": [],
+      "answer": "I couldn’t find any Hugging Face catalog model that satisfies all three of your constraints together:\n\n- under 1B parameters\n- larger than 70B parameters\n- optimized for mobile\n\nThose size requirements conflict, so no model can meet both at once.\n\nIf you meant one of these instead, I can narrow it down:\n- under 1B and mobile-optimized\n- over 70B and suitable for mobile deployment via quantization/offloading\n- a small on-device model for phones/tablets\n\nIf you want, I can recommend the best mobile-friendly sub-1B model from the catalog.",
+      "latency_s": 5.61,
+      "scores": {
+        "predicted_models": [],
+        "abstains": 1.0
+      }
+    },
+    {
+      "id": "N5",
+      "category": "impossible",
+      "question": "I read about meta-llama/Llama-5-70B-Instruct. Should I use it for my chatbot?",
+      "expected_models": [],
+      "answer": "`meta-llama/Llama-5-70B-Instruct` is not in the Hugging Face catalog I can verify, so I wouldn’t choose it based on that name alone.\n\nIf you want a Meta chatbot model from the catalog, the strongest verified option I found is:\n\n1. `meta-llama/Llama-3.3-70B-Instruct` — a large, current instruction-tuned chat model; good fit if you can afford the compute and want a high-quality general chatbot.\n\nIf you need something smaller and easier to run:\n\n2. `meta-llama/Meta-Llama-3-8B-Instruct` — much cheaper to serve, and still a solid general chatbot baseline.\n3. `meta-llama/Llama-3.2-3B-Instruct` — best if you need a lightweight local chatbot.\n\nSo: **yes, use a Llama-style instruct model for a chatbot, but not that specific `Llama-5-70B-Instruct` name unless you can verify it elsewhere.** If you want, I can help you pick the best option for your GPU budget or latency target.",
+      "latency_s": 6.26,
+      "scores": {
+        "predicted_models": [
+          "meta-llama/Llama-5-70B-Instruct",
+          "meta-llama/Llama-3.3-70B-Instruct",
+          "meta-llama/Meta-Llama-3-8B-Instruct",
+          "meta-llama/Llama-3.2-3B-Instruct"
+        ],
+        "abstains": 0.0
+      }
+    },
+    {
+      "id": "N6",
+      "category": "impossible",
+      "question": "I need an instruction-tuned model with at least 2 trillion parameters.",
+      "expected_models": [],
+      "answer": "I couldn’t find any instruction-tuned model in the catalog with **at least 2 trillion parameters**.\n\nWhat I verified:\n- A size-filtered search for `instruct` with `min_params_b=2000` returned **0 matches**\n- The catalog only surfaced much smaller instruction-tuned models, and some larger models have **unknown parameter counts**, so they can’t be confirmed as 2T+ from the catalog data\n\nIf you want, I can help with one of these instead:\n- the **largest verified instruction-tuned model**\n- the **largest model under a practical size cap** you can run\n- a **2T+ model family** if you already have a specific name in mind and want me to check it individually",
+      "latency_s": 4.88,
+      "scores": {
+        "predicted_models": [],
+        "abstains": 1.0
+      }
+    },
+    {
+      "id": "N1",
+      "category": "multi_turn",
+      "question": "Recommend a good coding model.\nIt's for a large production codebase; hardware is no constraint.",
+      "expected_models": [
+        "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+      ],
+      "answer": "For a large production codebase and no hardware constraint, my top pick is:\n\n1. **Qwen/Qwen3-Coder-480B-A35B-Instruct** — the largest code-specialized instruct checkpoint I found in the catalog, and it’s explicitly positioned for coding agents and local development.\n\nIf you want the more practical fallback instead of the absolute largest:\n2. **Qwen/Qwen3-Coder-Next** — also a dedicated coding model, much smaller than 480B but still a strong modern code agent model.\n3. **IQuestLab/IQuest-Coder-V1-40B-Instruct** — a code-specialist model aimed at autonomous software engineering, worth considering if you want a smaller but still serious code model.\n\nIf you want, I can next narrow this to:\n- best for **repo-wide refactoring**\n- best for **agentic coding / tool use**\n- best for **long-context code understanding**",
+      "latency_s": 13.68,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+          "Qwen/Qwen3-Coder-Next",
+          "IQuestLab/IQuest-Coder-V1-40B-Instruct"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 0.6300059872618923,
+        "asks_clarification_turn1": 1.0
+      },
+      "turn_answers": [
+        "Good default pick: **Qwen/Qwen2.5-Coder-14B-Instruct** — strong code-focused instruct model, and a solid balance of capability vs. size for local use.\n\nIf you want alternatives by footprint:\n1. **Qwen/Qwen2.5-Coder-7B-Instruct** — smaller, easier to run, still a capable coding model.\n2. **Qwen/Qwen2.5-Coder-32B-Instruct** — stronger if you have the VRAM for it.\n3. **Qwen/Qwen3-Coder-Next** — newer coding-agent-oriented flagship, but much larger.\n\nIf you tell me your GPU/VRAM budget, I can narrow this to the best fit.",
+        "For a large production codebase and no hardware constraint, my top pick is:\n\n1. **Qwen/Qwen3-Coder-480B-A35B-Instruct** — the largest code-specialized instruct checkpoint I found in the catalog, and it’s explicitly positioned for coding agents and local development.\n\nIf you want the more practical fallback instead of the absolute largest:\n2. **Qwen/Qwen3-Coder-Next** — also a dedicated coding model, much smaller than 480B but still a strong modern code agent model.\n3. **IQuestLab/IQuest-Coder-V1-40B-Instruct** — a code-specialist model aimed at autonomous software engineering, worth considering if you want a smaller but still serious code model.\n\nIf you want, I can next narrow this to:\n- best for **repo-wide refactoring**\n- best for **agentic coding / tool use**\n- best for **long-context code understanding**"
+      ]
+    },
+    {
+      "id": "N2",
+      "category": "multi_turn",
+      "question": "Which model should I run locally?\nI have a gaming laptop with 8 GB of VRAM.",
+      "expected_models": [
+        "Qwen/Qwen2.5-3B-Instruct",
+        "meta-llama/Llama-3.2-3B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct"
+      ],
+      "answer": "With 8 GB VRAM, I’d pick:\n\n1. **Qwen/Qwen2.5-3B-Instruct** — best balance of capability and headroom for a local laptop GPU; 3B is a safer fit than 7B.\n2. **Qwen/Qwen2.5-1.5B-Instruct** — if you want faster responses and more comfortable VRAM usage.\n3. **meta-llama/Llama-3.2-1B-Instruct** — another lightweight option if you prioritize speed over quality.\n\nI would **not** make **Qwen/Qwen2.5-7B-Instruct** your default on 8 GB VRAM unless you’re specifically planning to use aggressive quantization and can accept tighter memory limits.\n\nIf you want, I can next narrow this to:\n- **best quality under 8 GB**\n- **fastest model**\n- **best coding model**",
+      "latency_s": 8.99,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-3B-Instruct",
+          "Qwen/Qwen2.5-1.5B-Instruct",
+          "meta-llama/Llama-3.2-1B-Instruct",
+          "Qwen/Qwen2.5-7B-Instruct"
+        ],
+        "precision@3": 0.6666666666666666,
+        "recall@3": 0.6666666666666666,
+        "mrr": 1.0,
+        "ndcg@3": 0.7625024946924551,
+        "asks_clarification_turn1": 1.0
+      },
+      "turn_answers": [
+        "If you want a strong default for local use, I’d start with:\n\n1. **meta-llama/Llama-3.1-8B-Instruct** — best general-purpose pick here; 8B is a good local sweet spot and it’s the top-liked instruct model in the results.\n2. **mistralai/Mistral-7B-Instruct-v0.2** — slightly smaller and often easier to run, while still a solid general assistant.\n3. **meta-llama/Meta-Llama-3-8B-Instruct** — same size class as Llama 3.1, but the newer 3.1 version is the better default from the catalog.\n\nIf you have a lot of VRAM and want maximum capability, **meta-llama/Llama-3.3-70B-Instruct** is a much larger step up, but it’s far less practical for most local setups.\n\nIf you tell me your GPU/VRAM and what you want to do with it, I can narrow this to one best model.",
+        "With 8 GB VRAM, I’d pick:\n\n1. **Qwen/Qwen2.5-3B-Instruct** — best balance of capability and headroom for a local laptop GPU; 3B is a safer fit than 7B.\n2. **Qwen/Qwen2.5-1.5B-Instruct** — if you want faster responses and more comfortable VRAM usage.\n3. **meta-llama/Llama-3.2-1B-Instruct** — another lightweight option if you prioritize speed over quality.\n\nI would **not** make **Qwen/Qwen2.5-7B-Instruct** your default on 8 GB VRAM unless you’re specifically planning to use aggressive quantization and can accept tighter memory limits.\n\nIf you want, I can next narrow this to:\n- **best quality under 8 GB**\n- **fastest model**\n- **best coding model**"
+      ]
+    },
+    {
+      "id": "N7",
+      "category": "off_topic",
+      "question": "What's the weather like in Ljubljana today?",
+      "expected_models": [],
+      "answer": "I can’t check live weather. I only help with choosing models from the Hugging Face catalog.\n\nIf you want, I can help you find a small on-device model, a chat model, or a weather-capable app/model setup.",
+      "latency_s": 1.22,
+      "scores": {
+        "predicted_models": [],
+        "redirects": 1.0
+      }
+    },
+    {
+      "id": "N8",
+      "category": "ranking",
+      "question": "Our multilingual support desk needs two models that we want to buy from a single vendor for procurement reasons: a general-purpose instruction-tuned chat assistant around 7B parameters, and a separate dedicated machine-translation model for documents. Which same-vendor pair should we deploy?",
+      "expected_models": [
+        "tencent/Hunyuan-7B-Instruct",
+        "tencent/Hy-MT2-7B",
+        "tencent/Hunyuan-MT-7B",
+        "tencent/Hy-MT2-1.8B"
+      ],
+      "answer": "For a single-vendor procurement pair, I’d pick:\n\n1. **Qwen/Qwen2.5-7B-Instruct** — a true ~7.6B instruction-tuned general chat model with strong multilingual support; it’s the cleanest fit for the support-desk assistant side.\n2. **nvidia/Riva-Translate-4B-Instruct-v1.1** — a dedicated translation model built for multilingual translation workflows and explicitly benchmarked on FLORES/NTREX/WMT24.\n\nWhy this pair:\n- They come from **different vendors** in the catalog, so if you must buy from **one vendor only**, this exact pair does **not** satisfy the procurement constraint.\n- I did not find a single vendor in the catalog here with both:\n  - a ~7B general-purpose instruct chat model, and\n  - a dedicated document translation model,\n  as clearly as these two do individually.\n\nIf you want, I can do a stricter same-vendor search and give you the best **all-Qwen**, **all-Meta**, or **all-NVIDIA** procurement-compliant pair available in the catalog.",
+      "latency_s": 11.3,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-7B-Instruct",
+          "nvidia/Riva-Translate-4B-Instruct-v1.1"
+        ],
+        "precision@3": 0.0,
+        "recall@3": 0.0,
+        "mrr": 0.0,
+        "ndcg@3": 0.0
+      }
+    },
+    {
+      "id": "N9",
+      "category": "ranking",
+      "question": "Our API exposes a per-request toggle: users choose whether the model should deliberate step by step or answer immediately. We need an instruction-tuned model under 35B parameters whose reasoning mode can be switched on and off like that at inference time.",
+      "expected_models": [
+        "Qwen/Qwen3-32B",
+        "LGAI-EXAONE/EXAONE-4.0-32B",
+        "Qwen/Qwen3-14B"
+      ],
+      "answer": "Your best fit is **Qwen/Qwen3-4B-Instruct-2507**.\n\nWhy:\n- It is explicitly the **“non-thinking mode”** version, and the model card says it **does not generate `<think></think>` blocks**.\n- That means it supports the **immediate-answer mode** cleanly.\n- Since your API needs a **per-request toggle**, this is the only grounded match I found for a model family that exposes a documented thinking/non-thinking switch at inference time; the card itself indicates the non-thinking side, not a generic always-reasoning checkpoint.\n\nCaveat:\n- The model card I verified here only confirms **non-thinking mode**, not a runtime toggle on this exact checkpoint.\n- If you want a model where the reasoning mode is **explicitly switchable at inference time**, you should probably look at the broader **Qwen3** family with its thinking/non-thinking variants rather than the 2507 non-thinking-only release.\n\nIf you want, I can next search the catalog specifically for **Qwen3 thinking-mode / non-thinking-mode paired checkpoints under 35B** and give you the exact model IDs that support the toggle.",
+      "latency_s": 6.86,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen3-4B-Instruct-2507"
+        ],
+        "precision@3": 0.0,
+        "recall@3": 0.0,
+        "mrr": 0.0,
+        "ndcg@3": 0.0
+      }
+    },
+    {
+      "id": "N10",
+      "category": "ranking",
+      "question": "We're setting up speculative decoding: we need a target model of roughly 30 to 35 billion parameters and a draft model under 2 billion from the same model family (so the tokenizer matches), both instruction-tuned. Which pair do you recommend?",
+      "expected_models": [
+        "Qwen/Qwen2.5-32B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-1.7B",
+        "Qwen/Qwen3-0.6B"
+      ],
+      "answer": "I’d recommend the **Qwen2.5** family:\n\n1. **Qwen/Qwen2.5-32B-Instruct** — verified at **32.76B parameters**, instruction-tuned, and a strong target-sized model in your 30–35B window.\n2. **Qwen/Qwen2.5-0.5B-Instruct** — verified at **0.49B parameters**, instruction-tuned, and from the **same family**, so tokenizer compatibility is the cleanest choice for speculative decoding.\n\nWhy this pair: same model family, both original checkpoints, both instruction-tuned, and the draft is comfortably under 2B.\n\nOne caveat: if you want the draft to be closer to 1–2B for better draft quality, I can look for a **Qwen2.5**-family model in that range as well, but the only clearly verified under-2B original checkpoint I confirmed here is the 0.5B model.",
+      "latency_s": 6.37,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-32B-Instruct",
+          "Qwen/Qwen2.5-0.5B-Instruct"
+        ],
+        "precision@3": 0.6666666666666666,
+        "recall@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 0.7641405114294033
+      }
+    },
+    {
+      "id": "N11",
+      "category": "deterministic",
+      "question": "We review whole repositories in one pass, so we need a coding-specialist model with at least 256K tokens of native context, instruction-tuned, under 35B parameters, and it must be the original checkpoint. What should we use?",
+      "expected_models": [
+        "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+      ],
+      "answer": "Use **Qwen/Qwen3-Coder-30B-A3B-Instruct**.\n\nWhy it fits:\n- **Coding specialist**: it’s explicitly a coder model.\n- **Native 256K context**: the model card says **262,144 tokens natively**.\n- **Instruction-tuned**: it’s the **Instruct** checkpoint.\n- **Under 35B**: it has **30.5B total parameters**.\n- **Original checkpoint**: this is the base model page, not a quantized/repackaged re-upload.\n\nI would not pick the AWQ/FP8 variants here, since you asked for the **original checkpoint**.",
+      "latency_s": 4.48,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+        ],
+        "precision@3": 0.3333333333333333,
+        "recall@3": 1.0,
+        "mrr": 1.0,
+        "ndcg@3": 1.0
+      }
+    },
+    {
+      "id": "N12",
+      "category": "ranking",
+      "question": "We're building a code-completion product with tiered latency routing: requests go to a small model under 1B parameters, a mid-size one around 7B, or a large one around 30B, depending on the query. All three must be coding-specialized, instruction-tuned, and from the same model family so tokenization and behavior stay consistent. Which trio should we deploy?",
+      "expected_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
+        "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+      ],
+      "answer": "Deploy the **Qwen2.5-Coder** family:\n\n1. **Qwen/Qwen2.5-Coder-0.5B-Instruct** — verified at **0.49B parameters**; it is the instruction-tuned small tier and stays in the same tokenizer/family as the larger siblings.\n2. **Qwen/Qwen2.5-Coder-7B-Instruct** — verified at **7.61B parameters**; this is the mid-size instruction-tuned coding model in the same family.\n3. **Qwen/Qwen2.5-Coder-32B-Instruct** — verified at **32.5B parameters**; this is the large instruction-tuned coding model in the same family.\n\nWhy this trio:\n- All three are explicitly **coding-specialized** and **instruction-tuned** in their model cards.\n- All three share the **Qwen2.5-Coder** family, so tokenization and behavior are aligned.\n- The sizes map cleanly to your routing tiers: **sub-1B / ~7B / ~30B**.\n\nOne caution: the catalog also has quantized re-uploads of these checkpoints, but for a product stack you’ll usually want the **original checkpoints** above unless you specifically want a GGUF/AWQ/GPTQ format.\n\nIf you want, I can next help you pick the best serving format for each tier under a specific VRAM budget.",
+      "latency_s": 10.58,
+      "scores": {
+        "predicted_models": [
+          "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+          "Qwen/Qwen2.5-Coder-7B-Instruct",
+          "Qwen/Qwen2.5-Coder-32B-Instruct"
+        ],
+        "precision@3": 1.0,
+        "recall@3": 1.0,
+        "mrr": 1.0,
+        "ndcg@3": 0.7899980042460358
+      }
+    }
+  ]
+}

@@ -204,6 +204,61 @@
       "question": "What's the weather like in Ljubljana today?",
       "expected_models": [],
       "justification": "Entirely outside the system's scope; a good answer politely redirects to model recommendation topics and recommends zero models."
+    },
+    {
+      "id": "N8",
+      "category": "ranking",
+      "question": "Our multilingual support desk needs two models that we want to buy from a single vendor for procurement reasons: a general-purpose instruction-tuned chat assistant around 7B parameters, and a separate dedicated machine-translation model for documents. Which same-vendor pair should we deploy?",
+      "expected_models": [
+        "tencent/Hunyuan-7B-Instruct",
+        "tencent/Hy-MT2-7B",
+        "tencent/Hunyuan-MT-7B",
+        "tencent/Hy-MT2-1.8B"
+      ],
+      "justification": "The pair spans two pipeline types (text-generation and translation), and a structured filter carries exactly one task_type — the cross-pipeline join plus the same-vendor constraint cannot be expressed in a single fetch round. Tencent is the only vendor with originals on both sides: Hunyuan-7B-Instruct for chat plus the Hunyuan/Hy-MT translation line (Hy-MT2-7B newest, Hunyuan-MT-7B, or the 1.8B variants)."
+    },
+    {
+      "id": "N9",
+      "category": "ranking",
+      "question": "Our API exposes a per-request toggle: users choose whether the model should deliberate step by step or answer immediately. We need an instruction-tuned model under 35B parameters whose reasoning mode can be switched on and off like that at inference time.",
+      "expected_models": [
+        "Qwen/Qwen3-32B",
+        "LGAI-EXAONE/EXAONE-4.0-32B",
+        "Qwen/Qwen3-14B"
+      ],
+      "justification": "Switchable thinking is a card-level property: the Qwen3 hybrid models (32B, 14B) advertise seamless switching between thinking and non-thinking modes (stated ~char 800+ of the card, beyond the 400-char excerpt), and EXAONE-4.0-32B is a hybrid reasoning model. The tempting distractor QwQ-32B reasons always-on and cannot be toggled. No metadata field encodes this, so choosing correctly requires reading candidate cards."
+    },
+    {
+      "id": "N10",
+      "category": "ranking",
+      "question": "We're setting up speculative decoding: we need a target model of roughly 30 to 35 billion parameters and a draft model under 2 billion from the same model family (so the tokenizer matches), both instruction-tuned. Which pair do you recommend?",
+      "expected_models": [
+        "Qwen/Qwen2.5-32B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-1.7B",
+        "Qwen/Qwen3-0.6B"
+      ],
+      "justification": "The two size windows (~30-35B and <2B) cannot be expressed in one min/max filter, and the same-family constraint links the picks across the two windows. Among 30-35B instruct models (Yi-34B, CodeLlama-34B, granite-34B, EXAONE-32B, Olmo-32B, ...), only the Qwen lines also offer official sub-2B instruct siblings, so a coherent pair is Qwen2.5-32B with 1.5B/0.5B, or Qwen3-32B with 1.7B/0.6B."
+    },
+    {
+      "id": "N11",
+      "category": "deterministic",
+      "question": "We review whole repositories in one pass, so we need a coding-specialist model with at least 256K tokens of native context, instruction-tuned, under 35B parameters, and it must be the original checkpoint. What should we use?",
+      "expected_models": ["Qwen/Qwen3-Coder-30B-A3B-Instruct"],
+      "justification": "The only original coding specialist under 35B whose card claims 256K native context is Qwen3-Coder-30B-A3B-Instruct (the claim sits at char ~880 of the card, beyond the 400-char result excerpt). The tempting alternative, Qwen2.5-Coder-32B-Instruct, supports 128K per its card — context length appears in no metadata field, so choosing correctly requires reading the candidates' cards, which a single fetch round cannot do."
+    },
+    {
+      "id": "N12",
+      "category": "ranking",
+      "question": "We're building a code-completion product with tiered latency routing: requests go to a small model under 1B parameters, a mid-size one around 7B, or a large one around 30B, depending on the query. All three must be coding-specialized, instruction-tuned, and from the same model family so tokenization and behavior stay consistent. Which trio should we deploy?",
+      "expected_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
+        "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+      ],
+      "justification": "Three disjoint size windows cannot be expressed in one min/max filter, and the same-family constraint links all three picks. The Qwen2.5-Coder line is the only coding family in the catalog with official instruct checkpoints in all three windows (0.5B, 7B, 32B); no other coding family spans under-1B to 30B-class."
     }
   ]
 }

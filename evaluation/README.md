@@ -73,6 +73,7 @@ backend/.venv/bin/python -m evaluation.run
 backend/.venv/bin/python -m evaluation.run --systems agent          # agent only
 backend/.venv/bin/python -m evaluation.run --ids D1 Q5 Q20          # subset
 backend/.venv/bin/python -m evaluation.run --categories ranking     # one category
+backend/.venv/bin/python -m evaluation.run --runs 5                 # 5 repetitions
 ```
 
 Results land in `evaluation/results/<timestamp>_<system>.json` (per-question
@@ -94,6 +95,28 @@ the questions both share:
 
 ```bash
 backend/.venv/bin/python -m evaluation.compare results/A.json results/B.json
+```
+
+### Multi-run pooled comparison
+
+Single runs are noisy (the same question can flip 0↔1 between runs with
+identical code), so headline claims rest on several repetitions:
+`--runs 5` interleaves five full repetitions of every system, and
+`evaluation.pooled` groups the result files by system, averages each
+question's scores across runs, and tests the pooled per-question paired
+differences with an *exact* sign-flip permutation test (all 2^n sign
+assignments), a bootstrap 95% CI, per-question win/tie/loss counts, and —
+with ≥ 3 runs per system — the p-value range when any single run is left
+out. It also derives a per-question `composite` task-success score
+(nDCG@k for deterministic/ranking/multi_turn, clarification+mention mean
+for ambiguous, abstention for impossible, redirect for off_topic) so all
+categories enter one paired test over the full dataset:
+
+```bash
+backend/.venv/bin/python -m evaluation.run --runs 5
+backend/.venv/bin/python -m evaluation.pooled                     # latest batch
+backend/.venv/bin/python -m evaluation.pooled 20260713_235740     # by timestamp
+backend/.venv/bin/python -m evaluation.pooled --metrics all --per-question
 ```
 
 Unit tests: `backend/.venv/bin/python -m pytest evaluation/tests` (from the

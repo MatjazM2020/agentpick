@@ -240,6 +240,12 @@ def main() -> None:
         "stored answers (no API calls); writes <name>_rescored.json.",
     )
     parser.add_argument("--k", type=int, default=3, help="Cutoff for @k metrics (default: 3).")
+    parser.add_argument(
+        "--runs", type=int, default=1,
+        help="Repeat the full evaluation this many times (default: 1). Runs are "
+        "interleaved across systems and written as <stamp>_r<i>_<system>.json; "
+        "pool them with `python -m evaluation.pooled`.",
+    )
     parser.add_argument("--ids", nargs="+", help="Only these question ids (e.g. D1 Q5).")
     parser.add_argument(
         "--categories", nargs="+", choices=CATEGORIES, help="Only these categories."
@@ -268,14 +274,16 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    for system in args.systems:
-        report = asyncio.run(evaluate_system(system, questions, args.k))
-        out_path = args.out_dir / f"{stamp}_{system}.json"
-        out_path.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        print_summary(report)
-        print(f"  results -> {out_path}")
+    for run_idx in range(1, args.runs + 1):
+        suffix = f"_r{run_idx}" if args.runs > 1 else ""
+        for system in args.systems:
+            report = asyncio.run(evaluate_system(system, questions, args.k))
+            out_path = args.out_dir / f"{stamp}{suffix}_{system}.json"
+            out_path.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            print_summary(report)
+            print(f"  results -> {out_path}")
 
 
 if __name__ == "__main__":
