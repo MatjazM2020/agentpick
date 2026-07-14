@@ -73,6 +73,16 @@ def test_extract_keeps_digitless_real_ids():
     ]
 
 
+def test_extract_keeps_word_shaped_catalog_ids():
+    # Catalog membership keeps ids whose repo side looks like a prose word
+    # ("biogpt", "starcoder"); shape heuristics alone would drop them.
+    answer = "Compare microsoft/biogpt and bigcode/starcoder, not vendor/chatbot."
+    assert metrics.extract_model_ids(answer) == [
+        "microsoft/biogpt",
+        "bigcode/starcoder",
+    ]
+
+
 def test_extract_empty_text():
     assert metrics.extract_model_ids("") == []
 
@@ -82,6 +92,54 @@ def test_extract_ignores_quant_levels_and_bare_versions():
     # "Q4_K_M/Q5_0") and runtime versions ("exllama/v2").
     answer = "GGUF quant levels like Q4/Q5/Q8 via exllama/v2 or Q4_K_M/Q5_0."
     assert metrics.extract_model_ids(answer) == []
+
+
+def test_extract_ignores_prose_junk_pairs_from_eval_answers():
+    # Junk shapes actually produced by the 2026-07-13/14 runs: family names
+    # with dotted versions, size bounds, format tokens, prose compounds, and
+    # GPU names, each written as an "org/repo"-looking pair.
+    answer = (
+        "Qwen2.5/CodeLlama families use context scaling via Qwen3/Qwen2.5 "
+        "recipes; pick a mini/under-35B model shipped as GGUF/MLX-4bit or an "
+        "instruction-tuned/open-instruct-style checkpoint. For "
+        "document/seq-to-seq translation on compute/RAM-efficient hardware "
+        "(A100/A6000), llama.cpp/llama.cpp-compatible builds handle "
+        "under-1B/near-1B drafts and PubMed/PubMed-like corpora."
+    )
+    assert metrics.extract_model_ids(answer) == []
+
+
+def test_extract_drops_family_umbrella_before_member_ids():
+    # Agent N12: "I'd deploy Qwen/Qwen2.5-Coder as the family" preceded the
+    # actual picks and was scored as the (wrong) top prediction.
+    answer = (
+        "I'd deploy Qwen/Qwen2.5-Coder as the family: "
+        "1. Qwen/Qwen2.5-Coder-32B-Instruct — large tier. "
+        "2. Qwen/Qwen2.5-Coder-7B-Instruct — mid tier."
+    )
+    assert metrics.extract_model_ids(answer) == [
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
+    ]
+
+
+def test_extract_keeps_umbrella_shaped_id_when_it_is_gold():
+    # A gold id that a longer mentioned id happens to extend must survive.
+    gold = ["Qwen/Qwen3-32B"]
+    answer = "Use Qwen/Qwen3-32B; avoid the Qwen/Qwen3-32B-AWQ re-upload."
+    assert metrics.extract_predictions(answer, gold) == [
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-32B-AWQ",
+    ]
+
+
+def test_extract_predictions_credits_verbatim_full_gold_id():
+    # "microsoft/biogpt" (N3 gold): the all-lowercase single-token repo fails
+    # the shape heuristics and the bare-name fallback refused matches after
+    # "/", so the exact gold id written verbatim previously scored 0.
+    gold = ["BioMistral/BioMistral-7B", "microsoft/biogpt"]
+    answer = "1. microsoft/biogpt — the classic biomedical generator."
+    assert metrics.extract_predictions(answer, gold) == ["microsoft/biogpt"]
 
 
 def test_extract_predictions_credits_bare_gold_repo_name():
@@ -198,6 +256,15 @@ def test_detects_impossible_show_up_and_not_aware_paraphrases():
     )
 
 
+def test_detects_impossible_isnt_in_the_catalog_contraction():
+    # Agent N5 (20260714_043202 run): a correct catalog-absence abstention
+    # phrased with a contraction the phrase list missed.
+    assert metrics.detects_impossible(
+        "No — I wouldn’t pick meta-llama/Llama-5-70B-Instruct for your "
+        "chatbot, because that exact model isn’t in the catalog I can verify."
+    )
+
+
 def test_asks_clarification():
     assert metrics.asks_clarification("Here are options. What hardware do you have?")
     assert not metrics.asks_clarification("1. org/model — best fit.")
@@ -249,8 +316,8 @@ def test_dataset_loads_and_is_well_formed():
 def test_dataset_category_balance():
     counts = {c: len(load_dataset(categories=[c])) for c in CATEGORIES}
     assert counts == {
-        "deterministic": 3,
-        "ranking": 9,
+        "deterministic": 4,
+        "ranking": 8,
         "ambiguous": 2,
         "impossible": 3,
         "multi_turn": 2,
@@ -261,8 +328,8 @@ def test_dataset_category_balance():
 def test_dataset_filters():
     assert [q.id for q in load_dataset(ids=["D1", "Q20"])] == ["D1", "Q20"]
     ranking = load_dataset(categories=["ranking"])
-    assert len(ranking) == 9
-    assert all(len(q.expected_models) == 3 for q in ranking)
+    assert len(ranking) == 8
+    assert all(len(q.expected_models) >= 3 for q in ranking)
 
 
 # ---------------------------------------------------------------------------

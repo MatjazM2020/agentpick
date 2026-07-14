@@ -10,8 +10,8 @@ against the live catalog (1,709 models), in six categories:
 
 | Category | n | Gold answer | What a good system does |
 |---|---|---|---|
-| `deterministic` | 3 | one exact model (alternatives listed where defensible) | returns it first |
-| `ranking` | 9 | ordered list of 3 models | reproduces the ranking |
+| `deterministic` | 4 | one exact model (alternatives listed where defensible) | returns it first |
+| `ranking` | 8 | ordered list of 3+ models | reproduces the ranking |
 | `ambiguous` | 2 | acceptable suggestions | suggests options **and** asks a clarifying question |
 | `impossible` | 3 | none | abstains (contradiction, nonexistent model, empty filter) |
 | `multi_turn` | 2 | ordered list of 3 models | asks a clarifying question on turn 1, then answers turn 2 using the dialogue context |
@@ -37,10 +37,14 @@ to results and query again — the agentic loop.
 ## Metrics
 
 Answers are free text; a ranked prediction is extracted by matching
-`org/model` ids in order of first mention (case-insensitive). Gold models
-mentioned by bare repo name (e.g. "Qwen2.5-Coder-7B-Instruct" without the
-org prefix) are also credited, so systems are not penalized for id
-formatting.
+`org/model` ids in order of first mention (case-insensitive). Extracted ids
+are validated against a committed snapshot of the catalog's model ids
+([`catalog_ids.txt`](catalog_ids.txt)); out-of-catalog mentions are kept when
+they plausibly name a real repo (so hallucinated picks still cost precision)
+and dropped when they are slash-separated prose ("chat/instruction-tuned").
+Gold models mentioned by bare repo name (e.g. "Qwen2.5-Coder-7B-Instruct"
+without the org prefix) are also credited, so systems are not penalized for
+id formatting.
 
 - **deterministic / ranking:** precision@3, recall@3, MRR, nDCG@3
   (graded relevance from the gold order, so rank errors are penalized).

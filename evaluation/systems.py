@@ -154,8 +154,8 @@ no code fences:
 Guidance:
 - Instruction tuning shows up as 'instruct', 'chat', or '-it' in the model id, not as a
   tag — use name_contains to require it.
-- Respect explicit size windows: "at least 7B" means min_params_b=7; "under 4B" means
-  max_params_b=4.
+- Translate explicit size bounds into the parameter filters: a stated lower bound
+  becomes min_params_b, a stated upper bound becomes max_params_b.
 - Superlatives (largest, smallest, most efficient, ...) need sort_by=largest or
   sort_by=smallest plus the relevant filters; otherwise prefer sort_by=downloads.
 - In a dialogue, parameterize the user's current need in light of all previous turns."""

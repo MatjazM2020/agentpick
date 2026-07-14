@@ -91,6 +91,11 @@ UI/backend/data/
 backend/logs/
 UI/backend/logs/
 
+# Generated output
+/results
+/logs
+evaluation/results/
+
 docs/
 
 # Docker
