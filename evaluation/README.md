@@ -46,21 +46,18 @@ Gold models mentioned by bare repo name (e.g. "Qwen2.5-Coder-7B-Instruct"
 without the org prefix) are also credited, so systems are not penalized for
 id formatting.
 
-- **deterministic / ranking:** precision@3, recall@3, MRR, nDCG@3
-  (graded relevance from the gold order, so rank errors are penalized).
-- **ambiguous:** clarification rate (answer asks a question) and expected-model
-  mention rate.
-- **impossible:** abstention rate (states no model fits / is not in the catalog).
-- **multi_turn:** turn-1 clarification rate plus the ranking metrics on the
-  final answer.
-- **off_topic:** redirect rate (answer recommends no models).
+- **deterministic / ranking / multi_turn:** precision@3, recall@3, MRR, nDCG@3
+  (graded relevance from the gold order, so rank errors are penalized),
+  computed on the final answer.
+- **ambiguous:** expected-model mention rate.
+- **impossible / off_topic:** no automatic score — a correct answer names no
+  model, which no ranking metric can express.
 - **all:** wall-clock latency per answer (whole dialogue for multi-turn).
 
 Per-category summaries report the mean of each metric with a
-percentile-bootstrap 95% confidence interval (when n ≥ 2). The abstention and
-clarification metrics are phrase/pattern heuristics; every raw answer is
-stored in the results JSON so scores can be audited and answers additionally
-graded by a human (e.g. explanation quality).
+percentile-bootstrap 95% confidence interval (when n ≥ 2). Every raw answer is
+stored in the results JSON so scores can be audited and the unscored
+categories graded by a human (as can explanation quality).
 
 ## Running
 
@@ -111,16 +108,32 @@ question's scores across runs, and tests the pooled per-question paired
 differences with an *exact* sign-flip permutation test (all 2^n sign
 assignments), a bootstrap 95% CI, per-question win/tie/loss counts, and —
 with ≥ 3 runs per system — the p-value range when any single run is left
-out. It also derives a per-question `composite` task-success score
-(nDCG@k for deterministic/ranking/multi_turn, clarification+mention mean
-for ambiguous, abstention for impossible, redirect for off_topic) so all
-categories enter one paired test over the full dataset:
+out. The reference system is tested against every other system, so the
+p-values of one metric form a family and are reported Holm-corrected as well.
+
+It also derives a per-question `composite` task-success score so the scored
+categories enter one paired test: nDCG@k for deterministic/ranking/multi_turn
+and mention rate for ambiguous, over 16 of the 20 questions.
+
+impossible and off_topic carry **no** composite. The only rule expressible
+without phrase heuristics — "correct iff the answer names no model" — measures
+silence rather than correctness: a retrieval baseline that happens to find
+nothing scores 1.0, while an answer that correctly denies the request and
+offers a verified alternative scores 0.0. It also contradicts the dataset it
+scores, whose N5 justification accepts naming a real alternative alongside the
+denial. Those answers are graded by hand from the stored results instead.
+
+The out-of-catalog recommendation rate the same command reports per system as
+grounding evidence does not count model ids the user named in the question (a
+correct answer to "should I use *nonexistent model*?" quotes that id back in
+order to deny it).
 
 ```bash
 backend/.venv/bin/python -m evaluation.run --runs 5
 backend/.venv/bin/python -m evaluation.pooled                     # latest batch
 backend/.venv/bin/python -m evaluation.pooled 20260713_235740     # by timestamp
 backend/.venv/bin/python -m evaluation.pooled --metrics all --per-question
+backend/.venv/bin/python -m evaluation.pooled --reference single_round
 ```
 
 Unit tests: `backend/.venv/bin/python -m pytest evaluation/tests` (from the

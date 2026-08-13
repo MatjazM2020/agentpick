@@ -12,15 +12,12 @@ Usage (from the repository root, with Qdrant/Postgres up and OPENAI_API_KEY set)
 
 Scoring per category:
 
-- deterministic / ranking — precision@k, recall@k, MRR, nDCG@k against the
-  gold list (k=3 by default).
-- ambiguous  — does the answer ask a clarifying question, and does it mention
-  at least one of the acceptable models.
-- impossible — does the answer abstain (state that no model fits / is not in
-  the catalog).
-- multi_turn — does the first answer ask a clarifying question, plus the
-  ranking and explanation metrics on the final answer.
-- off_topic  — does the answer redirect without recommending any model.
+- deterministic / ranking / multi_turn — precision@k, recall@k, MRR, nDCG@k
+  against the gold list (k=3 by default), computed on the final answer.
+- ambiguous  — does the answer mention at least one of the acceptable models.
+- impossible / off_topic — no automatic score: a correct answer names no
+  model, which no ranking metric can express. The extracted predictions and
+  the raw answer are stored for qualitative grading.
 
 Every raw answer is stored in the results file so answers can additionally be
 graded by a human. Latency (seconds per answer) is recorded for all questions.
@@ -61,21 +58,10 @@ def score_answer(question: EvalQuestion, answers: list[str], k: int) -> dict:
         scores[f"recall@{k}"] = metrics.recall_at_k(predicted, gold, k)
         scores["mrr"] = metrics.mrr(predicted, gold)
         scores[f"ndcg@{k}"] = metrics.ndcg_at_k(predicted, gold, k)
-        if question.category == "multi_turn":
-            scores["asks_clarification_turn1"] = float(
-                metrics.asks_clarification(answers[0] if answers else "")
-            )
     elif question.category == "ambiguous":
-        scores["asks_clarification"] = float(metrics.asks_clarification(final))
         scores["mentions_expected"] = float(
             metrics.recall_at_k(predicted, gold, len(predicted) or 1) > 0
         )
-    elif question.category == "impossible":
-        scores["abstains"] = float(
-            metrics.detects_impossible(final) or not predicted
-        )
-    elif question.category == "off_topic":
-        scores["redirects"] = float(not predicted)
     return scores
 
 

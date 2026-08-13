@@ -83,7 +83,8 @@ async def filter_models(
     ] = None,
     name_contains: Annotated[
         Optional[str],
-        Field(description="Substring the model id must contain, e.g. 'instruct', 'coder', 'distill'."),
+        Field(description="Substring the model id must contain, e.g. a capability "
+                          "marker such as 'instruct'."),
     ] = None,
     min_params_b: Annotated[
         Optional[float], Field(description="Minimum parameter count in billions, e.g. 7. "
@@ -103,10 +104,10 @@ async def filter_models(
 ) -> str:
     """Structured catalog query for precise constraints, popularity, and size rankings.
 
-    Use for concrete requirements ("under 4B parameters", "coding model", "most
-    downloaded", "smallest instruction-tuned model") and for superlatives ("largest
-    instruct model", "biggest coder checkpoint") via sort_by=largest/smallest with
-    name_contains filters — not sort_by=downloads. The result includes
+    Use for concrete requirements (an explicit size bound, a task, "most
+    downloaded") and for size superlatives — the biggest or smallest model of a
+    given kind — via sort_by=largest/smallest combined with name_contains
+    filters, not via sort_by=downloads. The result includes
     'total_matches' (how many catalog models satisfy the filters overall) and
     'warnings' — heed both: a tiny total usually means the filter is too
     narrow, not that the catalog lacks such models. An empty result with no
@@ -137,7 +138,8 @@ async def filter_models(
 @tool(approval_mode="never_require")
 async def get_model_details(
     model_id: Annotated[
-        str, Field(description="Exact model id, e.g. 'Qwen/Qwen2.5-Coder-14B-Instruct'.")
+        str, Field(description="Exact model id as it appears in a search or filter "
+                               "result, e.g. 'org/model-name'.")
     ],
 ) -> str:
     """Full metadata and model card (README) for one model. Use to compare or verify a candidate."""

@@ -188,7 +188,7 @@ Every request is traced in an activity log (`backend/logs/agentpick.log`): reque
 
 ## Evaluation
 
-A reproducible evaluation harness lives in [`evaluation/`](evaluation/README.md): a 20-question gold dataset (verified against the live catalog of 1,709 models) across six categories — deterministic answers, rankings, ambiguous requests, impossible requests, multi-turn dialogues, and off-topic messages. It compares the full **agent** against an **llm_only** baseline (same LLM, no catalog tools) with ranking metrics (precision/recall@3, MRR, nDCG@3), behavioral rates (clarification, abstention, redirect), explanation-quality text metrics (ROUGE-L, BLEU, BERTScore), and bootstrap confidence intervals.
+A reproducible evaluation harness lives in [`evaluation/`](evaluation/README.md): a 20-question gold dataset (verified against the live catalog of 1,709 models) across six categories — deterministic answers, rankings, ambiguous requests, impossible requests, multi-turn dialogues, and off-topic messages. It compares the full **agent** against three baselines (**single_round**, **qdrant_only**, **llm_only**) with ranking metrics (precision/recall@3, MRR, nDCG@3), an expected-model mention rate for ambiguous requests, per-answer latency, and bootstrap confidence intervals. Impossible and off-topic questions carry no automatic score — a correct answer names no model — so their stored answers are graded qualitatively.
 
 Latest run (2026-07-08, `gpt-5.4-nano`, catalog of 1,709 models):
 
@@ -197,9 +197,7 @@ Latest run (2026-07-08, `gpt-5.4-nano`, catalog of 1,709 models):
 | deterministic (3) | MRR | **1.00** | 0.00 |
 | ranking (9) | MRR / nDCG@3 | **0.61 / 0.44** | 0.39 / 0.22 |
 | ambiguous (2) | mentions expected model | **0.50** | 0.00 |
-| impossible (3) | abstains | **0.67** | 0.33 |
 | multi-turn (2) | MRR / nDCG@3 | **0.50 / 0.42** | 0.50 / 0.21 |
-| off-topic (1) | redirects | 1.00 | 1.00 |
 
 The agent beats the tool-less baseline in every category with a graded answer; the small n per category and LLM sampling mean individual questions flip between runs, so compare across runs rather than reading single questions as fixed. Full per-question answers and scores are stored in `evaluation/results/`.
 

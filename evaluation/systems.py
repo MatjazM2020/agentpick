@@ -43,6 +43,37 @@ from src.core.agent_activity_log import current_context, log_tool_call
 
 TOP_K = 8  # same as the agent's search_models / filter_models default limit
 
+# Domain knowledge the agent is given — in src.agent.INSTRUCTIONS ("Catalog facts to
+# respect", "Judgment") and in the tool descriptions in src.tools, which only it sees.
+# Restated here so every baseline is told the same things about the catalog: the
+# systems must differ in the abilities they have, not in what they know about the
+# domain, or the comparison measures prompt content instead of architecture.
+# Keep in sync when the agent's instructions or tool descriptions change.
+CATALOG_KNOWLEDGE = """
+Catalog facts to respect:
+- Tags are sparse and inconsistent: capabilities often appear only in the model id or
+  the model card, not as tags (instruction tuning, for example, usually shows up as
+  'instruct', 'chat', or '-it' in the id). Naming conventions vary by family.
+- parameter_count is missing or unreliable for roughly a third of the catalog, so
+  size-sorted or size-filtered views can silently skip relevant models.
+- Quantized/GGUF/AWQ/GPTQ/FP8/MLX/4bit entries are repackaged re-uploads of an original
+  checkpoint; prefer the original unless the user asked for that format.
+- Model cards often point to a base model, a newer version, or the original checkpoint
+  behind a re-upload.
+- The catalog spans several pipeline types (text-generation, summarization,
+  translation, ...), so a dedicated task model may sit outside text-generation.
+
+Judgment:
+- Explicit size bounds are size bounds; hardware limits become a size range via the VRAM
+  rule of thumb (FP16 needs ~2 GB per billion parameters, 4-bit quantization ~0.7 GB),
+  with headroom left for context and serving.
+- Pure size questions are decided by verified numbers; quality questions by how strong
+  each candidate is for the task.
+- Match specialization to the task: domain tasks call for domain specialists, general
+  tasks for general instruct models.
+- Downloads and likes measure popularity, not quality or size; weigh what the user
+  actually optimizes for. As a rule of thumb, quality scales with parameter count."""
+
 LLM_ONLY_INSTRUCTIONS = """You are an expert assistant that helps users choose the right \
 open-source language model from the Hugging Face hub. You have NO catalog or search access; \
 answer from your own knowledge.
@@ -50,13 +81,18 @@ answer from your own knowledge.
 - Only recommend open-weight models whose weights are downloadable from the Hugging Face hub \
 (e.g. Llama, Qwen, Mistral, Gemma, DeepSeek, Phi families). Never recommend closed, \
 API-only models (GPT-4/o-series, Claude, Gemini).
-- Prefer popular, widely downloaded models (roughly 10k+ downloads) over obscure ones, and \
-only name models you are confident actually exist on the hub.
-- For recommendations, give a short ranked list: "1. org/model — one sentence on why it fits". \
-Usually 1-3 picks. Always use exact Hugging Face model ids ("org/model").
-- If the request is underspecified, still give a couple of solid options, then end with ONE \
-short clarifying question.
-- If no model can satisfy the constraints, say so plainly."""
+- Only name models you are confident actually exist on the hub.
+- Be concise and specialized, like a knowledgeable colleague — not a marketing page.
+- For recommendations, give a one-line framing then a short ranked list, best fit first: \
+"1. org/model — one sentence on why it fits". Always use exact Hugging Face model ids \
+("org/model").
+- If the request is underspecified, still give a couple of solid options, and make the LAST \
+sentence ONE direct clarifying question ending in "?" — an offer ("I can narrow this down if \
+you tell me more") or a conditional ("if you mean X, pick Y") is not a question.
+- If no model can satisfy the constraints, say so plainly.
+- If the request is unrelated to choosing or running models, say briefly that you only \
+help with picking models.
+""" + CATALOG_KNOWLEDGE
 
 
 _llm_only_agent: Optional[Agent] = None
@@ -125,15 +161,17 @@ _ANSWER_RULES = """You cannot run further queries; ground your answer in these r
 - NEVER invent models, parameter counts, benchmarks, or capabilities. Copy every model
   id you recommend VERBATIM from the results below — never write an id from memory,
   even for famous models.
-- For recommendations, give a one-line framing then a short ranked list:
-  "1. org/model — one grounded sentence on why it fits"; 3 picks whenever 3 genuinely fit.
+- Be concise and specialized, like a knowledgeable colleague — not a marketing page.
+- For recommendations, give a one-line framing then a short ranked list, best fit first:
+  "1. org/model — one grounded sentence on why it fits".
 - If none of the results satisfies the user's constraints, say so plainly — do not
   recommend a model that only partially fits.
 - If the request is underspecified, the LAST sentence of the reply MUST be ONE direct
-  clarifying question ending in "?".
-- If the request is unrelated to choosing or running models, do not answer it and do
-  not name any model — say briefly that you only help with picking models from the
-  catalog."""
+  clarifying question ending in "?" — an offer ("I can narrow this down if you tell me
+  more") or a conditional ("if you mean X, pick Y") is not a question.
+- If the request is unrelated to choosing or running models, say briefly that you
+  only help with picking models from the catalog.
+""" + CATALOG_KNOWLEDGE
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +183,10 @@ language model into catalog query parameters. Reply with ONLY a JSON object — 
 no code fences:
 
 {"search_query": "<text for a semantic search over model cards>",
- "filter": {"task_type": "<pipeline tag, e.g. text-generation, or null>",
+ "filter": {"task_type": "<exact pipeline tag, e.g. text-generation, summarization,
+                          translation, or null>",
+            "tag": "<a single tag that must be present, e.g. 'code' or
+                    'conversational', or null>",
             "name_contains": "<substring of the model id, or null>",
             "min_params_b": <number or null>,
             "max_params_b": <number or null>,
@@ -155,16 +196,22 @@ Guidance:
 - Instruction tuning shows up as 'instruct', 'chat', or '-it' in the model id, not as a
   tag — use name_contains to require it.
 - Translate explicit size bounds into the parameter filters: a stated lower bound
-  becomes min_params_b, a stated upper bound becomes max_params_b.
+  becomes min_params_b, a stated upper bound becomes max_params_b. Both exclude models
+  whose parameter count is unknown.
 - Superlatives (largest, smallest, most efficient, ...) need sort_by=largest or
   sort_by=smallest plus the relevant filters; otherwise prefer sort_by=downloads.
-- In a dialogue, parameterize the user's current need in light of all previous turns."""
+- In a dialogue, parameterize the user's current need in light of all previous turns.
+""" + CATALOG_KNOWLEDGE
 
 SINGLE_ROUND_INSTRUCTIONS = """You are an expert assistant that helps users choose the right \
 open-source language model from the Hugging Face catalog.
 
 Below are the results of two catalog queries whose parameters were chosen for this
-request: a structured metadata filter and a semantic search. """ + _ANSWER_RULES + """
+request: a structured metadata filter and a semantic search. The filter result carries
+'total_matches' (how many catalog models satisfy the filters overall) and 'warnings' —
+heed both: a tiny total usually means the filter was too narrow, not that the catalog
+lacks such models, while an empty result with no warnings means no catalog model
+satisfies the constraints. """ + _ANSWER_RULES + """
 
 Catalog context:
 """
@@ -203,7 +250,7 @@ def _filter_kwargs(plan: dict) -> dict:
     if not isinstance(raw, dict):
         return {}
     kwargs: dict = {}
-    for key in ("task_type", "name_contains"):
+    for key in ("task_type", "tag", "name_contains"):
         value = raw.get(key)
         if isinstance(value, str) and value.strip():
             kwargs[key] = value.strip()

@@ -108,6 +108,22 @@ services:
       - DEFAULT_PINNED_MODELS=agentpick-recommender
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-me-in-production}
       - ENV=production
+      # Starter prompts on the empty chat screen, drawn from the evaluation set
+      - >-
+        DEFAULT_PROMPT_SUGGESTIONS=[
+        {"title": ["Model for writing code", "under 15B parameters"],
+        "content": "I need an instruction-tuned coding model under 15B parameters that I can run locally. What do you recommend?"},
+        {"title": ["Fits in 8 GB of VRAM", "multilingual assistant"],
+        "content": "Recommend an instruction-tuned multilingual chat model that fits in 8 GB of VRAM."},
+        {"title": ["Largest instruction-tuned model", "in the catalog"],
+        "content": "Which is the largest instruction-tuned model in the catalog?"},
+        {"title": ["Summarizing legal documents", "on an ordinary CPU"],
+        "content": "Suggest a model for summarizing legal documents that runs on an ordinary CPU without a GPU."},
+        {"title": ["Best reasoning model", "no hardware constraints"],
+        "content": "I want the strongest reasoning-focused model available and I have no hardware constraints."},
+        {"title": ["Which model should I", "run locally?"],
+        "content": "Which model should I run locally?"}
+        ]
     volumes:
       - ui_data:/app/backend/data
     depends_on:

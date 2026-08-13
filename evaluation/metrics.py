@@ -1,10 +1,9 @@
 """Ranking metrics and answer parsing.
 
 Standard information-retrieval metrics (precision@k, recall@k, MRR, nDCG@k)
-over ranked model-id lists, plus the heuristics that turn a free-text agent
-answer into a ranked prediction: model-id extraction (validated against a
-snapshot of the catalog's ids), abstention detection, and clarifying-question
-detection.
+over ranked model-id lists, plus the model-id extraction that turns a
+free-text agent answer into a ranked prediction (validated against a snapshot
+of the catalog's ids).
 
 All matching of model ids is case-insensitive; nDCG uses graded relevance
 derived from the gold ranking (best gold model gets the highest grade).
@@ -185,99 +184,3 @@ def ndcg_at_k(predicted: Sequence[str], gold: Sequence[str], k: int) -> float:
     idcg = sum(g / math.log2(rank + 1) for rank, g in enumerate(ideal, start=1))
     return dcg / idcg if idcg > 0 else 0.0
 
-
-_ABSTENTION_PHRASES = (
-    "no model",
-    "no catalog model",
-    "no such model",
-    "no available model",
-    "not possible",
-    "cannot be satisfied",
-    "can't be satisfied",
-    "cannot satisfy",
-    "can't satisfy",
-    "cannot simultaneously",
-    "cannot be both",
-    "can't be both",
-    "cannot both",
-    "can't both",
-    "internally inconsistent",
-    "mutually exclusive",
-    "incompatible",
-    "contradict",
-    "conflict",
-    "impossible",
-    "does not exist",
-    "doesn't exist",
-    "not aware of any",
-    "not found",
-    "isn't found",
-    "none match",
-    # catalog-grounded absence (e.g. a nonexistent model id in the request)
-    "not in the catalog",
-    "isn't in the catalog",
-    "not in our catalog",
-    "not present in",
-    "not listed in",
-    "didn't show up",
-    "did not show up",
-    # empty catalog scans ("a scan ... returns nothing", "none meet the threshold")
-    "returns nothing",
-    "found nothing",
-    "no results",
-    "no matches",
-    "nothing matches",
-    "none meet",
-    "could not find",
-    "couldn't find",
-    "cannot find",
-    "can't find",
-    "unable to find",
-    # soft grounded abstention ("I can't verify that model in the catalog")
-    "cannot verify",
-    "can't verify",
-    "unable to verify",
-    "cannot confirm",
-    "can't confirm",
-)
-
-
-# Negative-existence statements with a qualifier between "no" and "model(s)"
-# ("no instruction-tuned models in the catalog meet that threshold",
-# "no models with >= 2T (2000B) parameters available").
-_NO_MODEL_RE = re.compile(
-    r"\bno\b[\w\s,'-]{0,60}?\bmodels?\b[\w\s,'()<>=≥≤~.%-]{0,40}?"
-    r"\b(?:meets?|match\w*|satisf\w*|exists?|fits?|qualif\w*|available)\b"
-)
-
-
-def detects_impossible(text: str) -> bool:
-    """Whether the answer states that no model satisfies the constraints
-    or that the requested model is not in the catalog."""
-    # Models emit curly apostrophes ("can’t"); normalize before matching.
-    lowered = (
-        (text or "")
-        .replace("\u2019", "'")
-        .replace("*", "")
-        .replace("`", "")
-        .casefold()
-    )
-    return any(p in lowered for p in _ABSTENTION_PHRASES) or bool(
-        _NO_MODEL_RE.search(lowered)
-    )
-
-
-# Imperative clarification requests without a question mark
-# ("If you tell me your target ..., I can narrow it down",
-# "say what hardware you have and I'll narrow it down").
-_CLARIFICATION_REQUEST_RE = re.compile(
-    r"\b(?:if you (?:can )?tell me|(?:please )?tell me(?:\s+\w+){0,3}\s+(?:your|what|which|more|me|about)|let me know|reply with|say (?:what|which|whether|how much|how many))\b",
-    re.IGNORECASE,
-)
-
-
-def asks_clarification(text: str) -> bool:
-    """Whether the answer asks the user a (clarifying) question, directly
-    ("What hardware do you have?") or as an imperative request."""
-    text = text or ""
-    return "?" in text or bool(_CLARIFICATION_REQUEST_RE.search(text))
