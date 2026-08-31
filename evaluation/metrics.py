@@ -1,20 +1,20 @@
 """Ranking metrics and answer parsing.
 
 Standard information-retrieval metrics (precision@k, recall@k, MRR, nDCG@k)
-over ranked model-id lists, text-similarity metrics (ROUGE-L, BLEU,
-BERTScore) of the answer against the gold justification, plus the heuristics
-that turn a free-text agent answer into a ranked prediction: model-id
-extraction, abstention detection, and clarifying-question detection.
+over ranked model-id lists, plus the model-id extraction that turns a
+free-text agent answer into a ranked prediction (validated against a snapshot
+of the catalog's ids).
 
 All matching of model ids is case-insensitive; nDCG uses graded relevance
 derived from the gold ranking (best gold model gets the highest grade).
-The text metrics need the extras in ``evaluation/requirements.txt``.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Sequence
 
 # "org/model" mentions: both sides must start alphanumeric.
@@ -22,29 +22,6 @@ _MODEL_ID_RE = re.compile(
     r"\b[A-Za-z0-9][A-Za-z0-9_.\-]*/[A-Za-z0-9][A-Za-z0-9_.\-]*\b"
 )
 _URL_RE = re.compile(r"https?://\S+")
-
-# Slash-separated prose that looks like an id must be filtered out. Junk falls
-# into a few shapes: size/precision tokens ("4-bit/8-bit", "bigger/70B",
-# "FP32/FP16"), two-word compounds ("chat/instruction-tuned", "Llama/Qwen-style"),
-# filenames ("GGUF/llama.cpp"), and plain words ("Spanish/French", "GPU/CPU").
-_REPO_LETTER_RE = re.compile(r"[A-Za-z]")
-_QUANTITY_RE = re.compile(
-    r"^(?:\d+(?:\.\d+)?-?(?:b|m|k|t|bit|bits|gb|mb)|(?:fp|bf|int)\d+|q\d+(?:_[a-z0-9]+)?)$",
-    re.IGNORECASE,
-)
-# Bare version tags ("exllama/v2") are runtimes, not model repos.
-_VERSION_ONLY_RE = re.compile(r"^v\d+(?:\.\d+)*$", re.IGNORECASE)
-# Exactly two plain words joined by one hyphen ("instruction-tuned",
-# "Qwen-style"); real hyphenated repos have digits, more segments
-# ("opus-mt-mul-en"), or id-style casing ("BioGPT-Large").
-_TWO_PLAIN_WORDS_RE = re.compile(r"^[A-Za-z][a-z]*-[A-Za-z][a-z]*$")
-_FILENAME_RE = re.compile(r"^[a-z]+\.[a-z]{1,4}$")
-_DIGIT_RE = re.compile(r"\d")
-_SEPARATOR_RE = re.compile(r"[-_.]")
-# Uppercase after lowercase ("BioMedLM"): id-style casing that prose words
-# ("French", "CPU", "Pearl", "PRs") never have.
-_INNER_CAMEL_RE = re.compile(r"[a-z][A-Z]")
-
 
 # Some catalog models are reachable under more than one id after a Hugging Face
 # repo rename; canonicalize known aliases so an equivalent id isn't scored as a
@@ -57,18 +34,61 @@ def _norm(model_id: str) -> str:
     return _META_LLAMA_ALIAS_RE.sub("meta-llama/llama-", key)
 
 
-def _plausible_repo(repo: str) -> bool:
-    """Whether the repo part of an "org/repo" candidate looks like a real
-    model repo name rather than a prose word pair."""
-    if not _REPO_LETTER_RE.search(repo):
-        return False  # fractions like "3/4"
-    if _VERSION_ONLY_RE.match(repo):
+@lru_cache(maxsize=1)
+def _catalog_keys() -> frozenset[str]:
+    """Normalized ids of every catalog model, from the committed snapshot
+    (catalog_ids.txt) so scoring works offline and stays reproducible."""
+    text = (Path(__file__).parent / "catalog_ids.txt").read_text(encoding="utf-8")
+    return frozenset(
+        _norm(line) for line in text.splitlines() if line and not line.startswith("#")
+    )
+
+
+# Candidates NOT in the catalog are either real out-of-catalog models (which
+# must stay in the prediction list so hallucinated or unavailable picks cost
+# precision) or slash-separated prose that happens to look like "org/repo"
+# ("chat/instruction-tuned", "FP32/FP16", "A100/A6000"). Two shape checks
+# separate them; neither matches a single one of the 1,709 catalog ids.
+#
+# A side that is entirely one quantity, precision, quant level, version, size
+# bound, GPU code, family-version fragment, or serialization format is prose.
+_JUNK_TOKEN_RE = re.compile(
+    r"""^(?:
+        \d+(?:\.\d+)?(?:-?(?:b|m|k|t|bit|bits|gb|mb))?                      # 3, 70B, 4-bit
+        |(?:fp|bf|int)\d+                                                   # FP16, int8
+        |q\d+(?:_[a-z0-9]+)?                                                # Q4, Q5_0
+        |v\d+(?:\.\d+)*                                                     # v2
+        |(?:under|over|near|about|sub|upto|up-to)-?\d+(?:\.\d+)?[a-z]{0,3}  # under-35B
+        |[a-z]\d{3,4}                                                       # A100, H100
+        |[a-z]+\d+\.\d+                                                     # Qwen2.5
+        |gguf|awq|gptq|mlx|exl2|bnb|onnx|safetensors                        # GGUF, MLX
+    )$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+# Digitless prose compounds ("open-instruct-style", "PubMed-like", "seq-to-seq").
+_PROSE_SUFFIX_RE = re.compile(
+    r"(?:-style|-like|-compatible|-efficient|-ready|-friendly|-only|-based)$|-to-",
+    re.IGNORECASE,
+)
+_DIGIT_RE = re.compile(r"\d")
+_SEPARATOR_RE = re.compile(r"[-_.]")
+# Uppercase after lowercase ("BioMedLM"): id-style casing that prose words
+# ("French", "CPU", "Pearl", "PRs") never have.
+_INNER_CAMEL_RE = re.compile(r"[a-z][A-Z]")
+
+
+def _plausible_id(org: str, repo: str) -> bool:
+    """Whether an out-of-catalog "org/repo" candidate plausibly names a real
+    model repo rather than slash-separated prose."""
+    if _JUNK_TOKEN_RE.match(org) or _JUNK_TOKEN_RE.match(repo):
         return False
     if _DIGIT_RE.search(repo):
-        return True  # version or size in the name ("Qwen2.5-3B-Instruct")
-    if _SEPARATOR_RE.search(repo):
-        return not (_TWO_PLAIN_WORDS_RE.match(repo) or _FILENAME_RE.match(repo))
-    return bool(_INNER_CAMEL_RE.search(repo))
+        return True  # version or size in the name ("Phi-3.5-mini-instruct")
+    if _PROSE_SUFFIX_RE.search(repo):
+        return False
+    # Digitless: needs id-style casing or several separators; single prose
+    # words ("transformers") and word pairs ("instruction-tuned") have neither.
+    return bool(_INNER_CAMEL_RE.search(repo)) or len(_SEPARATOR_RE.findall(repo)) >= 2
 
 
 def extract_model_ids(text: str) -> list[str]:
@@ -79,23 +99,21 @@ def extract_model_ids(text: str) -> list[str]:
 def extract_predictions(text: str, gold: Sequence[str]) -> list[str]:
     """Ranked predictions for scoring against ``gold``.
 
-    Every "org/model" id mentioned in the answer, plus gold models mentioned
-    by bare repo name (answers often drop the org prefix and write just
-    "Qwen2.5-Coder-7B-Instruct"), merged in order of first mention. A bare
-    mention inside a longer id — or right after a different org's "/" — is
-    not credited.
+    Every "org/model" id mentioned in the answer — kept when it is a catalog
+    model, or when an out-of-catalog id still plausibly names a real repo —
+    plus gold models mentioned by bare repo name (answers often drop the org
+    prefix and write just "Qwen2.5-Coder-7B-Instruct"), merged in order of
+    first mention. A bare mention inside a longer id — or right after a
+    different org's "/" — is not credited.
     """
     cleaned = _URL_RE.sub(" ", text or "")
     # normalized id -> (first-mention offset, display form)
     entries: dict[str, tuple[int, str]] = {}
     for match in _MODEL_ID_RE.finditer(cleaned):
         candidate = match.group(0).rstrip(".-")
-        org, repo = candidate.split("/", 1)
-        if _QUANTITY_RE.match(org) or _QUANTITY_RE.match(repo):
-            continue
-        if not _plausible_repo(repo):
-            continue
         key = _norm(candidate)
+        if key not in _catalog_keys() and not _plausible_id(*candidate.split("/", 1)):
+            continue
         if key not in entries:
             entries[key] = (match.start(), candidate)
     folded = cleaned.casefold()
@@ -108,6 +126,16 @@ def extract_predictions(text: str, gold: Sequence[str]) -> list[str]:
         key = _norm(gold_id)
         if found and (key not in entries or found.start() < entries[key][0]):
             entries[key] = (found.start(), gold_id)
+    # A family umbrella written in id form ("Qwen/Qwen2.5-Coder" introducing
+    # the Qwen2.5-Coder-* picks) is not itself a recommendation: drop an id
+    # that two or more other mentioned ids extend, unless it is gold in its
+    # own right. Requiring several members keeps a genuine base-model pick
+    # ("Kimi-K2-Instruct") alive when just one variant of it is mentioned.
+    gold_keys = {_norm(g) for g in gold}
+    for key in [k for k in entries if k not in gold_keys]:
+        members = sum(1 for other in entries if other != key and other.startswith(key + "-"))
+        if members >= 2:
+            del entries[key]
     return [candidate for _, candidate in sorted(entries.values())]
 
 
@@ -156,139 +184,3 @@ def ndcg_at_k(predicted: Sequence[str], gold: Sequence[str], k: int) -> float:
     idcg = sum(g / math.log2(rank + 1) for rank, g in enumerate(ideal, start=1))
     return dcg / idcg if idcg > 0 else 0.0
 
-
-# ---------------------------------------------------------------------------
-# Explanation quality — text similarity to the gold justification
-# ---------------------------------------------------------------------------
-
-_rouge = None
-_bert_scorer = None
-
-
-def text_scores(answer: str, reference: str) -> dict:
-    """ROUGE-L, BLEU, and BERTScore-F1 of an answer against a reference
-    explanation (the dataset's gold ``justification``).
-
-    Scores are normalized: ROUGE-L F-measure and BLEU in [0, 1]; BERTScore F1
-    rescaled with the English baseline (unrelated texts score near 0, and can
-    dip slightly below). Scorers are loaded once and reused.
-    """
-    global _rouge, _bert_scorer
-    try:
-        import sacrebleu
-        from bert_score import BERTScorer
-        from rouge_score import rouge_scorer
-    except ImportError as e:
-        raise ImportError(
-            "Text metrics need the evaluation extras: "
-            "pip install -r evaluation/requirements.txt"
-        ) from e
-
-    if not (answer or "").strip() or not (reference or "").strip():
-        return {"rougeL": 0.0, "bleu": 0.0, "bertscore_f1": 0.0}
-
-    if _rouge is None:
-        _rouge = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
-    if _bert_scorer is None:
-        _bert_scorer = BERTScorer(lang="en", rescale_with_baseline=True)
-
-    rouge_l = _rouge.score(reference, answer)["rougeL"].fmeasure
-    bleu = sacrebleu.sentence_bleu(answer, [reference]).score / 100.0
-    _, _, f1 = _bert_scorer.score([answer], [reference])
-    return {
-        "rougeL": round(rouge_l, 4),
-        "bleu": round(bleu, 4),
-        "bertscore_f1": round(float(f1[0]), 4),
-    }
-
-
-_ABSTENTION_PHRASES = (
-    "no model",
-    "no catalog model",
-    "no such model",
-    "no available model",
-    "not possible",
-    "cannot be satisfied",
-    "can't be satisfied",
-    "cannot satisfy",
-    "can't satisfy",
-    "cannot simultaneously",
-    "cannot be both",
-    "can't be both",
-    "cannot both",
-    "can't both",
-    "internally inconsistent",
-    "mutually exclusive",
-    "incompatible",
-    "contradict",
-    "conflict",
-    "impossible",
-    "does not exist",
-    "doesn't exist",
-    "not found",
-    "isn't found",
-    "none match",
-    # catalog-grounded absence (e.g. a nonexistent model id in the request)
-    "not in the catalog",
-    "not in our catalog",
-    "not present in",
-    "not listed in",
-    # empty catalog scans ("a scan ... returns nothing", "none meet the threshold")
-    "returns nothing",
-    "found nothing",
-    "no results",
-    "no matches",
-    "nothing matches",
-    "none meet",
-    "could not find",
-    "couldn't find",
-    "cannot find",
-    "can't find",
-    "unable to find",
-    # soft grounded abstention ("I can't verify that model in the catalog")
-    "cannot verify",
-    "can't verify",
-    "unable to verify",
-    "cannot confirm",
-    "can't confirm",
-)
-
-
-# Negative-existence statements with a qualifier between "no" and "model(s)"
-# ("no instruction-tuned models in the catalog meet that threshold",
-# "no models with >= 2T (2000B) parameters available").
-_NO_MODEL_RE = re.compile(
-    r"\bno\b[\w\s,'-]{0,60}?\bmodels?\b[\w\s,'()<>=≥≤~.%-]{0,40}?"
-    r"\b(?:meets?|match\w*|satisf\w*|exists?|fits?|qualif\w*|available)\b"
-)
-
-
-def detects_impossible(text: str) -> bool:
-    """Whether the answer states that no model satisfies the constraints
-    or that the requested model is not in the catalog."""
-    # Models emit curly apostrophes ("can’t"); normalize before matching.
-    lowered = (
-        (text or "")
-        .replace("\u2019", "'")
-        .replace("*", "")
-        .replace("`", "")
-        .casefold()
-    )
-    return any(p in lowered for p in _ABSTENTION_PHRASES) or bool(
-        _NO_MODEL_RE.search(lowered)
-    )
-
-
-# Imperative clarification requests without a question mark
-# ("If you tell me your target ..., I can narrow it down").
-_CLARIFICATION_REQUEST_RE = re.compile(
-    r"\b(?:if you (?:can )?tell me|(?:please )?tell me(?:\s+\w+){0,3}\s+(?:your|what|which|more|me|about)|let me know|reply with)\b",
-    re.IGNORECASE,
-)
-
-
-def asks_clarification(text: str) -> bool:
-    """Whether the answer asks the user a (clarifying) question, directly
-    ("What hardware do you have?") or as an imperative request."""
-    text = text or ""
-    return "?" in text or bool(_CLARIFICATION_REQUEST_RE.search(text))

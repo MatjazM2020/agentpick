@@ -6,27 +6,27 @@
       "category": "deterministic",
       "question": "I need the smallest available instruction-tuned language model for a highly resource-constrained device. I care only about minimizing model size while retaining chat capabilities.",
       "expected_models": [
-        "trl-internal-testing/tiny-Qwen3ForCausalLM-Instruct-2507",
         "SupraLabs/Supra-50M-Instruct"
       ],
-      "justification": "The factually smallest instruction-tuned model in the catalog is the 2.45M-parameter trl-internal-testing tiny Qwen3 (a unit-test artifact); Supra-50M-Instruct (51.8M) is the smallest practically chat-capable one. The 'retaining chat capabilities' clause makes either answer defensible, so both count as gold."
+      "justification": "Supra-50M-Instruct (51.8M parameters) is the smallest practically chat-capable instruction-tuned model in the catalog. Smaller instruction-named entries are randomly-initialized test artifacts (e.g. the 2.45M trl-internal-testing tiny Qwen3), which the catalog tools exclude from search/filter results and flag as unusable by design, and which fail the question's 'retaining chat capabilities' requirement — so they are not acceptable answers."
     },
     {
       "id": "D2",
       "category": "deterministic",
-      "question": "I want the largest original, non-quantized distilled reasoning model available. It must explicitly be a distilled variant of a larger reasoning model.",
+      "question": "I want the largest distilled reasoning model available. It must explicitly be a distilled variant of a larger reasoning model, and it must be the original, unmodified checkpoint — no quantized, merged, abliterated, or otherwise altered re-uploads.",
       "expected_models": ["deepseek-ai/DeepSeek-R1-Distill-Llama-70B"],
-      "justification": "At 70 billion parameters this is the largest original distilled reasoning model; the 'original, non-quantized' clause excludes quantized re-uploads (RedHatAI FP8, Valdemardi AWQ) that would otherwise tie or beat it on raw parameter count."
+      "justification": "At 70 billion parameters this is the largest original distilled reasoning model. The 'original, unmodified' clause excludes both quantized re-uploads (RedHatAI FP8, Valdemardi AWQ) and altered community derivatives (e.g. the ~80B Huihui abliterated distill) that would otherwise beat it on raw parameter count."
     },
     {
       "id": "D3",
       "category": "deterministic",
       "question": "I want the instruction-tuned language model with the highest parameter count available. Ignore efficiency, cost, and deployment constraints.",
       "expected_models": [
+        "moonshotai/Kimi-K2-Thinking",
         "moonshotai/Kimi-K2-Instruct-0905",
         "moonshotai/Kimi-K2-Instruct"
       ],
-      "justification": "The Kimi-K2-Instruct checkpoints are the largest instruction-tuned models in the catalog at roughly 1.03 trillion parameters (the -0905 refresh is marginally larger); either variant counts as gold."
+      "justification": "Kimi-K2-Thinking is the highest-parameter post-trained (instruction-following) model in the catalog at ~1.058 trillion parameters; the Kimi-K2-Instruct checkpoints (~1.026T, the -0905 refresh marginally larger) count as alternative golds under the common reading of 'instruction-tuned' as the instruct line. Any of the three counts."
     },
     {
       "id": "Q5",
@@ -51,20 +51,9 @@
       "justification": "The Qwen2.5-Coder 14B model is the highest-capacity coding specialist under the 15B limit, followed by its 7B counterpart and the instruct version of the DeepSeek-Coder."
     },
     {
-      "id": "Q7",
-      "category": "ranking",
-      "question": "I want maximum reasoning quality. Recommend reasoning-focused, instruction-tuned models for text generation only.",
-      "expected_models": [
-        "deepseek-ai/DeepSeek-R1-0528",
-        "deepseek-ai/DeepSeek-R1",
-        "Qwen/QwQ-32B"
-      ],
-      "justification": "This ranking prioritizes the DeepSeek-R1-0528 checkpoint as the most recent flagship optimization for peak quality, followed by the original DeepSeek-R1 and the more compact QwQ-32B."
-    },
-    {
       "id": "Q8",
       "category": "ranking",
-      "question": "I am building a multilingual customer-support chatbot. I need a model under 10B parameters, instruction tuned, multilingual, and with low inference cost. Which models do you recommend?",
+      "question": "I am building a multilingual customer-support chatbot. I need a model under 10B parameters, instruction tuned and multilingual, with reasonable inference cost — answer quality comes first as long as the model stays under that size limit. Which models do you recommend?",
       "expected_models": [
         "Qwen/Qwen2.5-7B-Instruct",
         "meta-llama/Llama-3.1-8B-Instruct",
@@ -73,37 +62,16 @@
       "justification": "Qwen2.5-7B is chosen for its native multilingual focus and efficiency, while Llama-3.1-8B and Gemma-2-9b provide strong general-purpose instruction following in this size class."
     },
     {
-      "id": "Q9",
-      "category": "ranking",
-      "question": "I need a model for CPU-only deployment: less than 2B parameters, chat or instruction tuned, with a good balance of quality and speed. Which models do you recommend?",
-      "expected_models": [
-        "Qwen/Qwen2.5-1.5B-Instruct",
-        "google/gemma-3-1b-it",
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-      ],
-      "justification": "These models are small enough to maintain acceptable latency on modern CPUs, with Qwen2.5-1.5B currently offering the highest benchmarked quality for its size."
-    },
-    {
-      "id": "Q10",
-      "category": "ranking",
-      "question": "I need a model for academic writing assistance. It should be instruction tuned, have at least 7B parameters, and offer strong general language quality. Which models do you recommend?",
-      "expected_models": [
-        "meta-llama/Llama-3.1-8B-Instruct",
-        "Qwen/Qwen2.5-7B-Instruct",
-        "mistralai/Mistral-7B-Instruct-v0.2"
-      ],
-      "justification": "General-purpose models like Llama-3.1-8B are prioritized for academic prose due to their broad linguistic training, surpassing reasoning or coding specialists for general writing tasks."
-    },
-    {
       "id": "Q11",
       "category": "ranking",
       "question": "I want the highest quality open-source assistant for general-purpose chat. It must be instruction tuned; I have no hardware constraints. Which models do you recommend?",
       "expected_models": [
+        "moonshotai/Kimi-K2-Instruct-0905",
+        "moonshotai/Kimi-K2-Instruct",
         "meta-llama/Llama-3.1-405B-Instruct",
-        "openai/gpt-oss-120b",
-        "meta-llama/Llama-3.3-70B-Instruct"
+        "openai/gpt-oss-120b"
       ],
-      "justification": "Llama-3.1-405B is the premier large-scale open-weights model, with the 120B gpt-oss and Llama-3.3-70B following as high-capacity general assistants."
+      "justification": "With no hardware constraints, the catalog's strongest general assistants are the ~1T-parameter Kimi-K2 instruct checkpoints — the newest flagship generation, ahead of Llama-3.1-405B on public quality benchmarks (either K2 variant counts) — followed by Llama-3.1-405B as the premier dense flagship and gpt-oss-120b as the strongest compact flagship."
     },
     {
       "id": "N3",
@@ -133,10 +101,12 @@
       "question": "What is the best open-source model for a student?",
       "expected_models": [
         "meta-llama/Llama-3.1-8B-Instruct",
+        "microsoft/Phi-4-mini-instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
         "Qwen/Qwen2.5-1.5B-Instruct",
         "google/gemma-3-1b-it"
       ],
-      "justification": "The best choice depends on the student's needs (writing assistance, local study help, or lightweight efficiency); the system should suggest options and ask whether the student needs general study assistance, coding help, or local laptop use."
+      "justification": "The best choice depends on the student's needs; the system should suggest options and ask whether the student needs general study assistance, coding help, or local laptop use. The acceptable list holds one strong pick per interpretation: Llama-3.1-8B (general study), Phi-4-mini (laptop-friendly quality), Qwen2.5-Coder-7B (coursework coding), and Qwen2.5-1.5B / gemma-3-1b-it (lightweight local use)."
     },
     {
       "id": "Q19",
@@ -144,10 +114,12 @@
       "question": "I want the most efficient model.",
       "expected_models": [
         "SupraLabs/Supra-50M-Instruct",
+        "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
         "LiquidAI/LFM2.5-350M",
         "Qwen/Qwen2.5-3B-Instruct"
       ],
-      "justification": "Efficiency can mean smallest footprint, fastest generation, or best performance per parameter; the system should ask which definition applies."
+      "justification": "Efficiency can mean smallest usable footprint (Supra-50M, SmolLM2-135M), best quality per parameter (SmolLM2-1.7B, LFM2.5-350M), or efficient mainstream quality (Qwen2.5-3B); the system should ask which definition applies. Toy/research miniatures (TinyStories, pythia-14m) are not acceptable — they are not usable assistants under any reading of 'efficient'."
     },
     {
       "id": "Q20",
@@ -204,6 +176,36 @@
       "question": "What's the weather like in Ljubljana today?",
       "expected_models": [],
       "justification": "Entirely outside the system's scope; a good answer politely redirects to model recommendation topics and recommends zero models."
+    },
+    {
+      "id": "N8",
+      "category": "ranking",
+      "question": "Our multilingual support desk needs two models that we want to buy from a single vendor for procurement reasons: a general-purpose instruction-tuned chat assistant around 7B parameters, and a separate dedicated machine-translation model for documents. Which same-vendor pair should we deploy?",
+      "expected_models": [
+        "tencent/Hunyuan-7B-Instruct",
+        "tencent/Hy-MT2-7B",
+        "tencent/Hunyuan-MT-7B",
+        "tencent/Hy-MT2-1.8B"
+      ],
+      "justification": "The pair spans two pipeline types (text-generation and translation), and a structured filter carries exactly one task_type — the cross-pipeline join plus the same-vendor constraint cannot be expressed in a single fetch round. Tencent is the only vendor with originals on both sides: Hunyuan-7B-Instruct for chat plus the Hunyuan/Hy-MT translation line (Hy-MT2-7B newest, Hunyuan-MT-7B, or the 1.8B variants)."
+    },
+    {
+      "id": "N11",
+      "category": "deterministic",
+      "question": "We review whole repositories in one pass, so we need a coding-specialist model with at least 256K tokens of native context, instruction-tuned, under 35B parameters, and it must be the original checkpoint. What should we use?",
+      "expected_models": ["Qwen/Qwen3-Coder-30B-A3B-Instruct"],
+      "justification": "The only original coding specialist under 35B whose card claims 256K native context is Qwen3-Coder-30B-A3B-Instruct (the claim sits at char ~880 of the card, beyond the 400-char result excerpt). The tempting alternative, Qwen2.5-Coder-32B-Instruct, supports 128K per its card — context length appears in no metadata field, so choosing correctly requires reading the candidates' cards, which a single fetch round cannot do."
+    },
+    {
+      "id": "N12",
+      "category": "ranking",
+      "question": "We're building a code-completion product with tiered latency routing: requests go to a small model under 1B parameters, a mid-size one around 7B, or a large one around 30B, depending on the query. All three must be coding-specialized, instruction-tuned, and from the same model family so tokenization and behavior stay consistent. Which trio should we deploy?",
+      "expected_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
+        "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+      ],
+      "justification": "Three disjoint size windows cannot be expressed in one min/max filter, and the same-family constraint links all three picks. The Qwen2.5-Coder line is the only coding family in the catalog with official instruct checkpoints in all three windows (0.5B, 7B, 32B); no other coding family spans under-1B to 30B-class."
     }
   ]
 }

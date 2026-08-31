@@ -4,6 +4,10 @@
 .env
 venv
 
+thesis_v1
+thesis_v1/
+
+
 # Python
 __pycache__/
 *.py[cod]
@@ -90,6 +94,11 @@ backend/data/
 UI/backend/data/
 backend/logs/
 UI/backend/logs/
+
+# Generated output
+/results
+/logs
+evaluation/results/
 
 docs/
 

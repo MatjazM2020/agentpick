@@ -56,10 +56,13 @@ def _get_pool():
             from psycopg2.pool import ThreadedConnectionPool
         except ImportError as e:  # pragma: no cover
             raise CatalogUnavailable(f"psycopg2 not installed: {e}") from e
+        pool_size = int(os.getenv("POSTGRES_POOL_SIZE", "5"))
         try:
+            # minconn == maxconn: the agent fires several filter/search tools in
+            # parallel, so open all connections up front rather than mid-request.
             _pool = ThreadedConnectionPool(
-                minconn=1,
-                maxconn=int(os.getenv("POSTGRES_POOL_SIZE", "5")),
+                minconn=pool_size,
+                maxconn=pool_size,
                 host=os.getenv("POSTGRES_HOST", "localhost"),
                 port=int(os.getenv("POSTGRES_PORT", "5432")),
                 dbname=os.getenv("POSTGRES_DB", "agentpick"),
@@ -151,6 +154,23 @@ def _qdrant():
             _qclient = QdrantClient(url=config.qdrant_url())
             logger.info("[catalog] Qdrant client -> %s", config.qdrant_url())
     return _qclient
+
+
+def warm() -> None:
+    """Open the PostgreSQL pool and Qdrant client ahead of the first request.
+
+    Called from startup warmup (in a thread pool) so the first chat request
+    doesn't pay connection setup. Each resource warms independently: a failure
+    is logged and the other still warms.
+    """
+    try:
+        _get_pool()
+    except Exception as e:
+        logger.warning("[catalog] PostgreSQL warmup skipped: %s", e)
+    try:
+        _qdrant()
+    except Exception as e:
+        logger.warning("[catalog] Qdrant warmup skipped: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -337,15 +357,16 @@ def filter_models(
 
     all_clauses = where + size_clauses
     where_sql = (" WHERE " + " AND ".join(all_clauses)) if all_clauses else ""
+    # COUNT(*) OVER () is evaluated over the full filtered set before LIMIT,
+    # so total_matches comes back in the same round trip as the rows.
     sql = (
-        f"SELECT {_META_COLUMNS}, LEFT(model_card, %s) AS card_excerpt FROM models"
+        f"SELECT {_META_COLUMNS}, LEFT(model_card, %s) AS card_excerpt, "
+        f"COUNT(*) OVER () AS total_matches FROM models"
         f"{where_sql} ORDER BY {order} LIMIT %s"
     )
     rows = _select(sql, [_CARD_EXCERPT_CHARS] + wparams + size_params + [limit])
 
-    total = _select(
-        f"SELECT COUNT(*) AS n FROM models{where_sql}", wparams + size_params
-    )[0]["n"]
+    total = rows[0]["total_matches"] if rows else 0
 
     warnings: list[str] = []
     if tag and tag.strip() and total < _SPARSE_TAG_THRESHOLD:

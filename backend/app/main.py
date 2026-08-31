@@ -29,12 +29,22 @@ async def lifespan(app: FastAPI):
 
     async def _warmup() -> None:
         try:
+            from src import catalog
             from src.agent import get_client
             from src.core.llm import warmup
 
-            await asyncio.to_thread(warmup)
             get_client()
-            logger.info("Embedding model and OpenAI client pre-warmed")
+            # Embedder load and catalog connections are independent — warm both at once.
+            await asyncio.gather(
+                asyncio.to_thread(warmup),
+                asyncio.to_thread(catalog.warm),
+            )
+            # One end-to-end pass per tool path: the first real Qdrant query pays a
+            # one-off segment load (~0.7s) and the first SQL scan warms PG buffers —
+            # pay those here instead of on the first chat request.
+            await asyncio.to_thread(catalog.semantic_search, "general purpose chat assistant", 1)
+            await asyncio.to_thread(catalog.filter_models)
+            logger.info("Embedding model, OpenAI client, and catalog connections pre-warmed")
         except Exception as e:
             logger.warning(f"Background warmup failed (first request may be slower): {e}")
 

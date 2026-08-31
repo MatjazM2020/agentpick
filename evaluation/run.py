@@ -5,23 +5,19 @@ and writes per-question results plus per-category aggregates to a JSON file.
 
 Usage (from the repository root, with Qdrant/Postgres up and OPENAI_API_KEY set):
 
-    python -m evaluation.run                          # agent vs llm_only, all questions
+    python -m evaluation.run                          # all systems, all questions
     python -m evaluation.run --systems agent          # agent only
     python -m evaluation.run --ids D1 Q5 Q20          # subset
     python -m evaluation.run --categories ranking     # one category
 
 Scoring per category:
 
-- deterministic / ranking — precision@k, recall@k, MRR, nDCG@k against the
-  gold list (k=3 by default), plus explanation quality as ROUGE-L / BLEU /
-  BERTScore against the gold justification.
-- ambiguous  — does the answer ask a clarifying question, and does it mention
-  at least one of the acceptable models.
-- impossible — does the answer abstain (state that no model fits / is not in
-  the catalog).
-- multi_turn — does the first answer ask a clarifying question, plus the
-  ranking and explanation metrics on the final answer.
-- off_topic  — does the answer redirect without recommending any model.
+- deterministic / ranking / multi_turn — precision@k, recall@k, MRR, nDCG@k
+  against the gold list (k=3 by default), computed on the final answer.
+- ambiguous  — does the answer mention at least one of the acceptable models.
+- impossible / off_topic — no automatic score: a correct answer names no
+  model, which no ranking metric can express. The extracted predictions and
+  the raw answer are stored for qualitative grading.
 
 Every raw answer is stored in the results file so answers can additionally be
 graded by a human. Latency (seconds per answer) is recorded for all questions.
@@ -47,7 +43,7 @@ from src.core.agent_activity_log import dialogue_turn
 logger = logging.getLogger(__name__)
 
 DEFAULT_OUT_DIR = Path(__file__).resolve().parent / "results"
-SYSTEM_NAMES = ("agent", "llm_only")  # keys of evaluation.systems.SYSTEMS
+SYSTEM_NAMES = ("agent", "llm_only", "single_round", "qdrant_only")  # keys of evaluation.systems.SYSTEMS
 
 
 def score_answer(question: EvalQuestion, answers: list[str], k: int) -> dict:
@@ -62,23 +58,10 @@ def score_answer(question: EvalQuestion, answers: list[str], k: int) -> dict:
         scores[f"recall@{k}"] = metrics.recall_at_k(predicted, gold, k)
         scores["mrr"] = metrics.mrr(predicted, gold)
         scores[f"ndcg@{k}"] = metrics.ndcg_at_k(predicted, gold, k)
-        if question.justification:
-            scores.update(metrics.text_scores(final, question.justification))
-        if question.category == "multi_turn":
-            scores["asks_clarification_turn1"] = float(
-                metrics.asks_clarification(answers[0] if answers else "")
-            )
     elif question.category == "ambiguous":
-        scores["asks_clarification"] = float(metrics.asks_clarification(final))
         scores["mentions_expected"] = float(
             metrics.recall_at_k(predicted, gold, len(predicted) or 1) > 0
         )
-    elif question.category == "impossible":
-        scores["abstains"] = float(
-            metrics.detects_impossible(final) or not predicted
-        )
-    elif question.category == "off_topic":
-        scores["redirects"] = float(not predicted)
     return scores
 
 
@@ -153,13 +136,9 @@ async def evaluate_system(system: str, questions: list[EvalQuestion], k: int) ->
     from src.core import config  # importable via the bootstrap in evaluation/__init__.py
 
     run_fn = SYSTEMS[system]
-    # Load the text-metric scorers up front so a missing dependency or model
-    # download fails/happens before any API calls are made and answer latency
-    # is not distorted by scoring.
-    metrics.text_scores("warmup", "warmup")
-    if system == "agent":
+    if system in ("agent", "single_round", "qdrant_only"):
         # Pre-load the query embedder (as the API server does at startup) so
-        # the first search_models call isn't charged its ~20s load time.
+        # the first semantic search isn't charged its ~20s load time.
         from src.core.llm import warmup
 
         await asyncio.to_thread(warmup)
@@ -217,9 +196,7 @@ def print_summary(report: dict) -> None:
 def rescore_report(path: Path, k: int) -> dict:
     """Recompute scores and summary for an existing results file from its
     stored raw answers (no API calls). Gold models come from the stored
-    results (self-consistent with the old run); justifications, which are not
-    stored, come from the current dataset."""
-    justifications = {q.id: q.justification for q in load_dataset()}
+    results (self-consistent with the old run)."""
     report = json.loads(path.read_text(encoding="utf-8"))
     for result in report["results"]:
         answers = result.get("turn_answers") or [result.get("answer", "")]
@@ -228,7 +205,6 @@ def rescore_report(path: Path, k: int) -> dict:
             category=result["category"],
             turns=(result["question"],),
             expected_models=tuple(result["expected_models"]),
-            justification=justifications.get(result["id"], ""),
         )
         result["scores"] = score_answer(question, answers, k)
     report["k"] = k
@@ -242,7 +218,7 @@ def main() -> None:
     parser.add_argument(
         "--systems", nargs="+", choices=sorted(SYSTEM_NAMES),
         default=list(SYSTEM_NAMES),
-        help="Systems to evaluate (default: agent llm_only).",
+        help="Systems to evaluate (default: all).",
     )
     parser.add_argument(
         "--rescore", nargs="+", type=Path, metavar="RESULTS_JSON",
@@ -250,6 +226,12 @@ def main() -> None:
         "stored answers (no API calls); writes <name>_rescored.json.",
     )
     parser.add_argument("--k", type=int, default=3, help="Cutoff for @k metrics (default: 3).")
+    parser.add_argument(
+        "--runs", type=int, default=1,
+        help="Repeat the full evaluation this many times (default: 1). Runs are "
+        "interleaved across systems and written as <stamp>_r<i>_<system>.json; "
+        "pool them with `python -m evaluation.pooled`.",
+    )
     parser.add_argument("--ids", nargs="+", help="Only these question ids (e.g. D1 Q5).")
     parser.add_argument(
         "--categories", nargs="+", choices=CATEGORIES, help="Only these categories."
@@ -278,14 +260,16 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    for system in args.systems:
-        report = asyncio.run(evaluate_system(system, questions, args.k))
-        out_path = args.out_dir / f"{stamp}_{system}.json"
-        out_path.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        print_summary(report)
-        print(f"  results -> {out_path}")
+    for run_idx in range(1, args.runs + 1):
+        suffix = f"_r{run_idx}" if args.runs > 1 else ""
+        for system in args.systems:
+            report = asyncio.run(evaluate_system(system, questions, args.k))
+            out_path = args.out_dir / f"{stamp}{suffix}_{system}.json"
+            out_path.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            print_summary(report)
+            print(f"  results -> {out_path}")
 
 
 if __name__ == "__main__":

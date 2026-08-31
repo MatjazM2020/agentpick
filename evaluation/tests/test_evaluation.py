@@ -73,6 +73,16 @@ def test_extract_keeps_digitless_real_ids():
     ]
 
 
+def test_extract_keeps_word_shaped_catalog_ids():
+    # Catalog membership keeps ids whose repo side looks like a prose word
+    # ("biogpt", "starcoder"); shape heuristics alone would drop them.
+    answer = "Compare microsoft/biogpt and bigcode/starcoder, not vendor/chatbot."
+    assert metrics.extract_model_ids(answer) == [
+        "microsoft/biogpt",
+        "bigcode/starcoder",
+    ]
+
+
 def test_extract_empty_text():
     assert metrics.extract_model_ids("") == []
 
@@ -82,6 +92,54 @@ def test_extract_ignores_quant_levels_and_bare_versions():
     # "Q4_K_M/Q5_0") and runtime versions ("exllama/v2").
     answer = "GGUF quant levels like Q4/Q5/Q8 via exllama/v2 or Q4_K_M/Q5_0."
     assert metrics.extract_model_ids(answer) == []
+
+
+def test_extract_ignores_prose_junk_pairs_from_eval_answers():
+    # Junk shapes actually produced by the 2026-07-13/14 runs: family names
+    # with dotted versions, size bounds, format tokens, prose compounds, and
+    # GPU names, each written as an "org/repo"-looking pair.
+    answer = (
+        "Qwen2.5/CodeLlama families use context scaling via Qwen3/Qwen2.5 "
+        "recipes; pick a mini/under-35B model shipped as GGUF/MLX-4bit or an "
+        "instruction-tuned/open-instruct-style checkpoint. For "
+        "document/seq-to-seq translation on compute/RAM-efficient hardware "
+        "(A100/A6000), llama.cpp/llama.cpp-compatible builds handle "
+        "under-1B/near-1B drafts and PubMed/PubMed-like corpora."
+    )
+    assert metrics.extract_model_ids(answer) == []
+
+
+def test_extract_drops_family_umbrella_before_member_ids():
+    # Agent N12: "I'd deploy Qwen/Qwen2.5-Coder as the family" preceded the
+    # actual picks and was scored as the (wrong) top prediction.
+    answer = (
+        "I'd deploy Qwen/Qwen2.5-Coder as the family: "
+        "1. Qwen/Qwen2.5-Coder-32B-Instruct — large tier. "
+        "2. Qwen/Qwen2.5-Coder-7B-Instruct — mid tier."
+    )
+    assert metrics.extract_model_ids(answer) == [
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "Qwen/Qwen2.5-Coder-7B-Instruct",
+    ]
+
+
+def test_extract_keeps_umbrella_shaped_id_when_it_is_gold():
+    # A gold id that a longer mentioned id happens to extend must survive.
+    gold = ["Qwen/Qwen3-32B"]
+    answer = "Use Qwen/Qwen3-32B; avoid the Qwen/Qwen3-32B-AWQ re-upload."
+    assert metrics.extract_predictions(answer, gold) == [
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-32B-AWQ",
+    ]
+
+
+def test_extract_predictions_credits_verbatim_full_gold_id():
+    # "microsoft/biogpt" (N3 gold): the all-lowercase single-token repo fails
+    # the shape heuristics and the bare-name fallback refused matches after
+    # "/", so the exact gold id written verbatim previously scored 0.
+    gold = ["BioMistral/BioMistral-7B", "microsoft/biogpt"]
+    answer = "1. microsoft/biogpt — the classic biomedical generator."
+    assert metrics.extract_predictions(answer, gold) == ["microsoft/biogpt"]
 
 
 def test_extract_predictions_credits_bare_gold_repo_name():
@@ -151,81 +209,39 @@ def test_ndcg_no_relevant_predictions():
 
 
 # ---------------------------------------------------------------------------
-# Behavioral heuristics
+# Scoring
 # ---------------------------------------------------------------------------
 
-def test_detects_impossible():
-    assert metrics.detects_impossible(
-        "No catalog model satisfies these constraints: a model cannot be "
-        "under 1B and over 70B at the same time."
-    )
-    assert metrics.detects_impossible(
-        "meta-llama/Llama-5-70B-Instruct is not in the catalog; consider "
-        "meta-llama/Llama-3.3-70B-Instruct instead."
-    )
-    assert not metrics.detects_impossible("1. Qwen/Qwen2.5-3B-Instruct — best fit.")
+def _question(category: str, gold: tuple[str, ...] = ()):
+    from evaluation.dataset import EvalQuestion
+
+    return EvalQuestion(id="X", category=category, turns=("q",), expected_models=gold)
 
 
-def test_detects_impossible_cant_find_with_curly_apostrophe():
-    assert metrics.detects_impossible(
-        "I can\u2019t find a model card for meta-llama/Llama-5-70B-Instruct."
-    )
-    assert metrics.detects_impossible(
-        "I can\u2019t satisfy that requirement as stated."
-    )
+def test_score_answer_ranked_categories_report_the_ranking_metrics():
+    from evaluation.run import score_answer
+
+    scores = score_answer(_question("ranking", tuple(GOLD)), [f"1. {GOLD[0]}"], 3)
+    assert set(scores) == {"predicted_models", "precision@3", "recall@3", "mrr", "ndcg@3"}
+    assert scores["mrr"] == 1.0
 
 
-def test_detects_impossible_empty_scan_with_markdown():
-    # Agent N6: abstains but the phrase is wrapped in markdown emphasis.
-    assert metrics.detects_impossible(
-        "An HF catalog scan returns **nothing**—the largest models are 70B."
-    )
-    assert metrics.detects_impossible("None meet a **2 trillion** threshold.")
+def test_score_answer_leaves_no_model_categories_unscored():
+    # A correct impossible/off_topic answer names no model, which no ranking
+    # metric can express — those questions are graded qualitatively instead.
+    from evaluation.run import score_answer
+
+    for category in ("impossible", "off_topic"):
+        scores = score_answer(_question(category), ["No catalog model fits."], 3)
+        assert scores == {"predicted_models": []}
 
 
-def test_asks_clarification():
-    assert metrics.asks_clarification("Here are options. What hardware do you have?")
-    assert not metrics.asks_clarification("1. org/model — best fit.")
+def test_score_answer_ambiguous_reports_only_expected_mention():
+    from evaluation.run import score_answer
 
-
-def test_asks_clarification_imperative_without_question_mark():
-    # Agent N1 turn 1: a clarification request phrased imperatively.
-    assert metrics.asks_clarification(
-        "If you tell me your target (GPU/CPU + max memory) and whether you "
-        "want Python-only or multi-language, I can narrow it to the best size."
-    )
-
-
-def test_asks_clarification_please_tell_me_without_question_mark():
-    # Agent N2 turn 1 (184045 run): numbered setup questions without "?".
-    assert metrics.asks_clarification(
-        "Please tell me one thing about your setup:\n"
-        "1) What GPU/RAM do you have (e.g., 8GB CPU only, 12GB GPU, 24GB GPU), and\n"
-        "2) Your main use-case (chat/Q&A, coding, summarization, or translation)."
-    )
-
-
-# ---------------------------------------------------------------------------
-# Explanation-quality text metrics (loads the BERTScore model — slow once)
-# ---------------------------------------------------------------------------
-
-def test_text_scores_identity_beats_unrelated():
-    reference = (
-        "The Qwen2.5 series is selected for its superior multilingual "
-        "capabilities in smaller parameter sizes."
-    )
-    identical = metrics.text_scores(reference, reference)
-    unrelated = metrics.text_scores("Photosynthesis converts sunlight.", reference)
-    assert identical["rougeL"] == 1.0
-    assert identical["bleu"] > 0.9
-    for key in ("rougeL", "bleu", "bertscore_f1"):
-        assert identical[key] > unrelated[key]
-
-
-def test_text_scores_empty_answer_is_zero():
-    assert metrics.text_scores("", "reference text") == {
-        "rougeL": 0.0, "bleu": 0.0, "bertscore_f1": 0.0,
-    }
+    scores = score_answer(_question("ambiguous", tuple(GOLD)), [f"Maybe {GOLD[2]}."], 3)
+    assert scores["mentions_expected"] == 1.0
+    assert "asks_clarification" not in scores
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +265,8 @@ def test_dataset_loads_and_is_well_formed():
 def test_dataset_category_balance():
     counts = {c: len(load_dataset(categories=[c])) for c in CATEGORIES}
     assert counts == {
-        "deterministic": 3,
-        "ranking": 9,
+        "deterministic": 4,
+        "ranking": 8,
         "ambiguous": 2,
         "impossible": 3,
         "multi_turn": 2,
@@ -261,8 +277,8 @@ def test_dataset_category_balance():
 def test_dataset_filters():
     assert [q.id for q in load_dataset(ids=["D1", "Q20"])] == ["D1", "Q20"]
     ranking = load_dataset(categories=["ranking"])
-    assert len(ranking) == 9
-    assert all(len(q.expected_models) == 3 for q in ranking)
+    assert len(ranking) == 8
+    assert all(len(q.expected_models) >= 3 for q in ranking)
 
 
 # ---------------------------------------------------------------------------
@@ -333,3 +349,129 @@ def test_run_dialogue_passes_growing_history():
         {"role": "assistant", "content": "answer-1"},
         {"role": "user", "content": "turn two"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Pooled multi-run comparison (exact permutation test, Holm, composite)
+# ---------------------------------------------------------------------------
+
+def test_exact_sign_flip_matches_brute_force_enumeration():
+    """The meet-in-the-middle count must equal a naive 2^n enumeration."""
+    import itertools
+    import random
+
+    from evaluation.pooled import exact_sign_flip_p
+
+    rng = random.Random(7)
+    for n in range(2, 11):
+        diffs = [round(rng.uniform(-1, 1), 3) for _ in range(n)]
+        observed = abs(sum(diffs)) - 1e-12
+        brute = sum(
+            1
+            for signs in itertools.product((1, -1), repeat=n)
+            if abs(sum(s * d for s, d in zip(signs, diffs))) >= observed
+        ) / 2**n
+        assert exact_sign_flip_p(diffs) == brute
+
+
+def test_exact_sign_flip_edge_cases():
+    from evaluation.pooled import exact_sign_flip_p
+
+    assert exact_sign_flip_p([0.0, 0.0, 0.0]) == 1.0  # nothing to test
+    assert exact_sign_flip_p([0.4]) == 1.0  # one question can never be significant
+    assert exact_sign_flip_p([1.0] * 5) == 2 / 32  # only all-plus and all-minus
+    # A consistent difference over enough questions clears the usual threshold.
+    assert exact_sign_flip_p([0.3] * 14) < 0.05
+
+
+def test_holm_adjusts_by_rank_and_stays_monotone():
+    from evaluation.pooled import holm
+
+    # Smallest p gets the full family size, the largest gets 1x, and the
+    # adjusted values may never decrease as the raw ones increase.
+    assert holm([0.01, 0.04, 0.03]) == [0.03, 0.06, 0.06]
+    assert holm([0.5, 0.5, 0.5]) == [1.0, 1.0, 1.0]  # capped at 1
+
+
+def _pooled_result(category: str, scores: dict, question: str = "pick a model") -> dict:
+    return {"id": "X1", "category": category, "question": question, "scores": scores}
+
+
+def test_composite_uses_the_primary_metric_of_each_category():
+    from evaluation.pooled import _composite
+
+    ranked = _pooled_result("ranking", {"ndcg@3": 0.75, "predicted_models": ["a/b"]})
+    ambiguous = _pooled_result("ambiguous", {"mentions_expected": 1.0, "predicted_models": ["a/b"]})
+    assert _composite(ranked, 3) == 0.75
+    assert _composite(ambiguous, 3) == 1.0
+
+
+def test_composite_leaves_the_abstention_categories_unscored():
+    """"Named no model" measures silence, not correctness — a baseline that finds
+    nothing would outscore a correct denial that offers a verified alternative, which
+    the dataset explicitly accepts (N5). Those two categories are graded by hand."""
+    from evaluation.pooled import _composite
+
+    for category in ("impossible", "off_topic"):
+        assert _composite(_pooled_result(category, {"predicted_models": []}), 3) is None
+        assert _composite(_pooled_result(category, {"predicted_models": ["a/b"]}), 3) is None
+
+
+def test_every_baseline_is_given_the_agents_domain_knowledge():
+    """The systems must differ in what they can do, not in what they were told about
+    the catalog: a fact given to one system has to reach all four, or the comparison
+    measures prompt content instead of architecture."""
+    from evaluation import systems
+
+    for prompt in (
+        systems.LLM_ONLY_INSTRUCTIONS,
+        systems.SINGLE_ROUND_PLAN_INSTRUCTIONS,
+        systems.SINGLE_ROUND_INSTRUCTIONS,
+        systems.QDRANT_ONLY_INSTRUCTIONS,
+    ):
+        assert systems.CATALOG_KNOWLEDGE in prompt
+
+
+def test_no_baseline_is_told_more_than_the_agent_about_off_topic_requests():
+    """The off-topic questions are graded by hand, so the scope rule must be worded
+    the same everywhere: telling only the baselines "do not name any model" grades
+    them on an instruction the agent never got."""
+    from evaluation import systems
+
+    scope_rule = "say briefly that you\n  only help with picking models from the catalog."
+    assert scope_rule in systems._ANSWER_RULES
+    assert "help with picking models." in systems.LLM_ONLY_INSTRUCTIONS
+    for prompt in (systems.LLM_ONLY_INSTRUCTIONS, systems._ANSWER_RULES):
+        assert "do not name any model" not in prompt
+
+
+def test_single_round_can_express_every_filter_the_agent_can():
+    """The planner's filter must cover the same parameters as the agent's
+    filter_models tool, so the delta is the loop and not a narrower query API."""
+    import inspect
+
+    from src import catalog
+    from evaluation.systems import _filter_kwargs
+
+    tool_params = set(inspect.signature(catalog.filter_models).parameters) - {"limit"}
+    plan = {"filter": {"task_type": "translation", "tag": "code",
+                       "name_contains": "instruct", "min_params_b": 1,
+                       "max_params_b": 9, "sort_by": "largest"}}
+    assert set(_filter_kwargs(plan)) == tool_params
+
+
+def test_out_of_catalog_rate_ignores_a_model_id_the_user_named():
+    """N5 quotes a nonexistent id back to deny it — that is not a recommendation,
+    so it must not count against the system's grounding."""
+    from evaluation.pooled import _system_picks
+
+    fake = "meta-llama/Llama-5-70B-Instruct"
+    denial = _pooled_result(
+        "impossible",
+        {"predicted_models": [fake]},
+        question=f"I read about {fake}. Should I use it for my chatbot?",
+    )
+    assert _system_picks(denial) == []
+    # An alternative the system itself put forward still counts as a pick.
+    denial["scores"]["predicted_models"] = [fake, "Qwen/Qwen2.5-7B-Instruct"]
+    assert _system_picks(denial) == ["Qwen/Qwen2.5-7B-Instruct"]

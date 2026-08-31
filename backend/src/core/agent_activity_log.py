@@ -154,6 +154,7 @@ def log_request_start(
     streaming: bool,
     *,
     history_messages: int = 0,
+    system: str = "agent",
 ) -> None:
     ctx = current_context()
     if ctx is not None:
@@ -161,6 +162,7 @@ def log_request_start(
     parts = [
         "REQUEST START",
         f"id={request_id}",
+        f"system={system}",
         f"stream={streaming}",
     ]
     dialogue = current_dialogue()
