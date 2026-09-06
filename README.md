@@ -177,33 +177,6 @@ Full details, SLURM/HPC submission, and tuning live in [`agentpick_data/README.m
 
 The core is a **single conversational agent** ([`backend/src/agent.py`](backend/src/agent.py)) whose function-calling loop is the agentic part: the LLM decides which tools to call, in what order, and iterates on the results before writing a specialized answer. The loop is capped at `AGENT_MAX_TOOL_ITERATIONS` (default 8) LLM roundtrips per turn.
 
-```mermaid
-flowchart TB
-  REQ["User message + conversation history"]
-  INTAKE["Request intake<br/>system instructions · chat history<br/>· three tool descriptions"]
-  INTENT["Intent interpretation<br/>task, constraints and preferences<br/>become query criteria"]
-  J(( ))
-  DECIDE{"Does the agent need<br/>(more) catalog data?"}
-  TOOLS["Candidate retrieval<br/>one or more tool calls over the catalog"]
-  ANSWER["Answer formulation"]
-  A1["ranked<br/>recommendations"]
-  A2["clarifying<br/>question"]
-  A3["abstention"]
-  A4["redirect"]
-  SHOW["Answer shown to the user"]
-
-  REQ --> INTAKE --> INTENT --> J --> DECIDE
-  DECIDE -->|yes| TOOLS
-  TOOLS -->|"result appended to the context"| J
-  DECIDE -->|"no · or the 8-roundtrip cap is reached"| ANSWER
-  ANSWER --> A4 --> SHOW
-  ANSWER --> A3 --> SHOW
-  ANSWER --> A2 --> SHOW
-  ANSWER --> A1 --> SHOW
-```
-
-Each turn the agent chooses between calling tools and answering; every tool result is appended to the context, so the next roundtrip can refine the query or end the loop. Simple requests resolve after a single tool call, harder ones take a longer sequence of searches and verifications.
-
 | Tool | Role | Backed by |
 |------|------|-----------|
 | **`search_models`** | Semantic search over model-card chunks for fuzzy or task-based intent; re-uploads of one checkpoint are collapsed to a single family entry | Qdrant + Postgres |
