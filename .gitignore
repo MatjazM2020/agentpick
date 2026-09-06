@@ -7,6 +7,7 @@ venv
 thesis_v1
 thesis_v1/
 
+.claude/
 
 # Python
 __pycache__/

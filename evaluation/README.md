@@ -136,5 +136,19 @@ backend/.venv/bin/python -m evaluation.pooled --metrics all --per-question
 backend/.venv/bin/python -m evaluation.pooled --reference single_round
 ```
 
+### Markdown statistics for the thesis
+
+`evaluation.thesis_stats` runs the same pooled statistics over **every** batch
+(one batch per chat model) and writes them to a single markdown file: system
+means, per-category means, the run-to-run spread the pooling averages out, the
+paired comparisons with bootstrap CIs and Holm-corrected exact p-values, and
+the per-question composite table. It computes nothing itself — every number
+comes from `evaluation.pooled`.
+
+```bash
+backend/.venv/bin/python -m evaluation.thesis_stats
+backend/.venv/bin/python -m evaluation.thesis_stats --out thesis_v1/eval_stats.md
+```
+
 Unit tests: `backend/.venv/bin/python -m pytest evaluation/tests` (from the
 repository root).
