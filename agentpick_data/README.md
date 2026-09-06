@@ -93,6 +93,7 @@ agentpick_data/
     ├── load_embeddings_to_qdrant.py  # Parquet → Qdrant (vectors + payload)
     ├── initialize_postgres.py        # Wait + schema + load Parquet → Postgres + enrich
     ├── enrich_models.py              # HF → models.model_card + parameter_count
+    ├── backfill_param_counts.py      # Fill NULL parameter_count from sizes in model ids
     ├── init_postgres.sql             # PostgreSQL `models` table + indexes
     └── hf_vectorizer/                # Vectorization package
         ├── __main__.py
@@ -115,7 +116,7 @@ DEFAULT_EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"  # 1024-dim, cosine distance
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_MAX_TOKENS_PER_CHUNK = 512
 DEFAULT_CHUNK_OVERLAP_TOKENS = 64
-MIN_DOWNLOADS_THRESHOLD = 1000          # Skip models below this download count
+MIN_DOWNLOADS_THRESHOLD = 10000         # Skip models below this download count
 QDRANT_COLLECTION_NAME = "hf_models"
 ```
 
@@ -132,6 +133,9 @@ exported directly for the PostgreSQL scripts):
 | `POSTGRES_DB` | `agentpick` | PostgreSQL scripts |
 | `POSTGRES_USER` | `agentpick` | PostgreSQL scripts |
 | `POSTGRES_PASSWORD` | `agentpick_password` | PostgreSQL scripts |
+| `PARQUET_PATH` | `data/embeddings.parquet` | `initialize_postgres.py` (overridden by `--parquet-path`) |
+| `POSTGRES_RETRY_INTERVAL` | `5` | `initialize_postgres.py` (seconds between connection attempts) |
+| `POSTGRES_MAX_RETRIES` | `30` | `initialize_postgres.py` (attempts before giving up) |
 
 Optional `.env` (in `agentpick_data/`) for the vectorizer and Qdrant loader:
 
@@ -227,8 +231,8 @@ POSTGRES_PORT=5433 python src/initialize_postgres.py --skip-enrich
 
 The `models` table stores: `model_id` (PK), `downloads`, `likes`, `pipeline_tag`,
 `library_name`, `created_at`, `last_modified`, `tags[]`, `chunk_ids[]`, `num_chunks`,
-`parameter_count` (total params from HuggingFace `safetensors.total`, when available),
-and `model_card` (raw README.md markdown).
+`parameter_count` (total params from HuggingFace `safetensors.total`, when available —
+see the backfill note below), and `model_card` (raw README.md markdown).
 
 ### Enrichment — model cards & parameter counts
 
@@ -247,6 +251,22 @@ POSTGRES_PORT=5433 python src/enrich_models.py --limit 20 --dry-run
 Optional `HF_TOKEN` improves rate limits and gated-model access. Re-runs only fetch
 fields that are still empty, unless you pass `--force`. Use `--delay` to tune the
 pause between HuggingFace requests (default 0.2 s).
+
+### Backfill — nominal parameter counts
+
+Many repos (GGUF re-uploads, older pytorch-bin models) publish no `safetensors`
+metadata, so `enrich_models.py` leaves their `parameter_count` NULL.
+`backfill_param_counts.py` parses the nominal size out of the model id instead
+(`7b` → `7_000_000_000`) and fills those rows only — exact safetensors counts are
+never overwritten.
+
+```bash
+POSTGRES_PORT=5433 python src/backfill_param_counts.py --dry-run
+POSTGRES_PORT=5433 python src/backfill_param_counts.py
+```
+
+**After running this, `parameter_count` is a mix of exact and nominal values**, and
+the column alone does not say which is which.
 
 ## Step 4 — Query
 

@@ -10,6 +10,10 @@
 
 The design is **hybrid**: a single LLM agent (Microsoft Agent Framework) drives a bounded function-calling loop; deterministic Python implements each tool (embeddings + Qdrant semantic search, PostgreSQL structured filters, model-card lookup). Every model id in an answer must come verbatim from a tool result — the agent is instructed never to recommend from parametric memory.
 
+![AgentPick answering a request for an instruction-tuned coding model under 15B parameters with three ranked models, each with a short justification](assets/response.png)
+
+*A ranked answer: three catalog models with a justification each, a warning about quantized re-uploads, and a follow-up question to narrow the choice.*
+
 ---
 
 ## Table of contents
@@ -110,6 +114,10 @@ docker compose up -d --build
 2. Start a chat — the UI is preconfigured to call the backend at `http://backend:5000/v1` inside Docker, with `agentpick-recommender` as the default model.
 3. Ask for a model, for example: *"I need a small open-source model for summarizing legal documents on CPU."*
 
+![The AgentPick start screen: a chat input box above three suggested questions](assets/UI.png)
+
+*The start screen. The suggested questions cover the request types the system is built for; their order is shuffled on every visit.*
+
 > **Important:** `docker compose` starts with **empty databases**. Recommendations only work once you vectorize Hugging Face models and load the stores — see [Loading model data](#loading-model-data).
 
 Stop the stack:
@@ -168,6 +176,33 @@ Full details, SLURM/HPC submission, and tuning live in [`agentpick_data/README.m
 ## Agent and tools
 
 The core is a **single conversational agent** ([`backend/src/agent.py`](backend/src/agent.py)) whose function-calling loop is the agentic part: the LLM decides which tools to call, in what order, and iterates on the results before writing a specialized answer. The loop is capped at `AGENT_MAX_TOOL_ITERATIONS` (default 8) LLM roundtrips per turn.
+
+```mermaid
+flowchart TB
+  REQ["User message + conversation history"]
+  INTAKE["Request intake<br/>system instructions · chat history<br/>· three tool descriptions"]
+  INTENT["Intent interpretation<br/>task, constraints and preferences<br/>become query criteria"]
+  J(( ))
+  DECIDE{"Does the agent need<br/>(more) catalog data?"}
+  TOOLS["Candidate retrieval<br/>one or more tool calls over the catalog"]
+  ANSWER["Answer formulation"]
+  A1["ranked<br/>recommendations"]
+  A2["clarifying<br/>question"]
+  A3["abstention"]
+  A4["redirect"]
+  SHOW["Answer shown to the user"]
+
+  REQ --> INTAKE --> INTENT --> J --> DECIDE
+  DECIDE -->|yes| TOOLS
+  TOOLS -->|"result appended to the context"| J
+  DECIDE -->|"no · or the 8-roundtrip cap is reached"| ANSWER
+  ANSWER --> A4 --> SHOW
+  ANSWER --> A3 --> SHOW
+  ANSWER --> A2 --> SHOW
+  ANSWER --> A1 --> SHOW
+```
+
+Each turn the agent chooses between calling tools and answering; every tool result is appended to the context, so the next roundtrip can refine the query or end the loop. Simple requests resolve after a single tool call, harder ones take a longer sequence of searches and verifications.
 
 | Tool | Role | Backed by |
 |------|------|-----------|
@@ -276,6 +311,7 @@ docker compose build backend && docker compose up -d backend
 agentpick/
 ├── docker-compose.yaml        # UI, backend, Qdrant, Postgres
 ├── README.md
+├── assets/                    # Screenshots used in this README
 │
 ├── backend/                   # FastAPI recommendation service
 │   ├── Dockerfile
