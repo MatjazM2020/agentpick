@@ -1,6 +1,6 @@
 # AgentPick
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-OpenAI--compatible-00a67e?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Qdrant](https://img.shields.io/badge/Vector%20DB-Qdrant-dc244c)](https://qdrant.tech/)
@@ -403,4 +403,4 @@ docker compose exec backend curl -s http://qdrant:6333/healthz
 
 ## License
 
-MIT — see [`LICENSE`](UI/LICENSE) and the repository license files.
+GPL-3.0 — see [`LICENSE`](LICENSE). The `UI/` directory keeps its own Open WebUI License (see [`UI/LICENSE`](UI/LICENSE)).
