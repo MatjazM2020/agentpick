@@ -114,3 +114,9 @@ docker-compose.override.yaml
 .credentials
 .aws
 .credentials.json
+
+# UI (Open WebUI): re-include files the generic rules above would drop.
+# UI/.gitignore already excludes node_modules, build, .svelte-kit, .env* and pyodide.
+!UI/src/lib/
+!UI/package-lock.json
+!UI/.dockerignore
